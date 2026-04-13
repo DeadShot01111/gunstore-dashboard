@@ -53,7 +53,7 @@ const tabs: { key: ManagerTab; label: string }[] = [
 ];
 
 function formatMoney(value: number) {
-  return `$${value.toLocaleString()}`;
+  return `$${Number(value ?? 0).toLocaleString()}`;
 }
 
 function formatDisplayDate(value: string | Date) {
@@ -72,10 +72,6 @@ function formatDisplayDateTime(value: string | Date) {
   const hours = `${date.getHours()}`.padStart(2, "0");
   const minutes = `${date.getMinutes()}`.padStart(2, "0");
   return `${year}-${month}-${day} ${hours}:${minutes}`;
-}
-
-function formatDateTime(value: string) {
-  return formatDisplayDateTime(value);
 }
 
 function toDateTimeLocalValue(value: string) {
@@ -142,7 +138,9 @@ export default function ManagementPage() {
       setOrders(loadedOrders);
 
       if (!productsResult.error && Array.isArray(productsResult.data)) {
-        setCatalogProducts((productsResult.data as ProductRow[]).map(toCatalogProduct));
+        setCatalogProducts(
+          (productsResult.data as ProductRow[]).map(toCatalogProduct)
+        );
       } else {
         setSaveMessage(
           `Failed to load products: ${productsResult.error?.message ?? "Unknown error"}`
@@ -422,7 +420,7 @@ export default function ManagementPage() {
                         selectedOrderId === row.id ? "bg-white/5" : ""
                       }`}
                     >
-                      <td className="py-3 text-white">{formatDateTime(row.createdAt)}</td>
+                      <td className="py-3 text-white">{formatDisplayDateTime(row.createdAt)}</td>
                       <td className="py-3 text-white">{row.employeeName}</td>
                       <td className="py-3 text-zinc-300">{row.vipEnabled ? "Yes" : "No"}</td>
                       <td className="py-3 text-white">{formatMoney(row.subtotal)}</td>
@@ -504,9 +502,12 @@ export default function ManagementPage() {
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">Status</label>
                   <select
-                    value={(draftOrder.status ?? "Completed") as SavedOrderStatus}
+                    value={draftOrder.status ?? "Completed"}
                     onChange={(e) =>
-                      updateDraftField("status", e.target.value as SavedOrderStatus)
+                      updateDraftField(
+                        "status",
+                        e.target.value as "Completed" | "Edited" | "Pending Review"
+                      )
                     }
                     className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
                   >

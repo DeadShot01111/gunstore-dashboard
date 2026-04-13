@@ -1,90 +1,124 @@
-import { ammoBulkItems, defaultCatalogProducts } from "./catalog";
 import { CatalogProduct, SavedOrder, SavedOrderItem } from "./types";
+
+function getNumber(value: unknown, fallback = 0) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function getProductMap(products: CatalogProduct[]) {
+  const map = new Map<string, CatalogProduct>();
+  for (const product of products) {
+    map.set(product.name, product);
+  }
+  return map;
+}
 
 export function getCatalogPrice(
   product: CatalogProduct,
-  qty: number,
-  vipEnabled: boolean
+  qty = 1,
+  vipEnabled = false
 ) {
-  if (vipEnabled) {
-    if (product.vipMode === "fixed") {
-      return product.vipFixedPrice ?? product.price;
-    }
+  const normalPrice = getNumber(product.price);
 
-    if (product.vipMode === "percent") {
-      const percent = product.vipPercent ?? 15;
-      return Math.round(product.price * (1 - percent / 100));
+  if (!vipEnabled) {
+    const ammoBulkItems = ["Pistol Ammo", "SMG Ammo", "Shotgun Ammo"];
+    if (product.category === "Ammo" && ammoBulkItems.includes(product.name) && qty >= 10) {
+      return Math.max(normalPrice - 50, 0);
     }
-
-    return product.price;
+    return normalPrice;
   }
 
-  if (
-    product.category === "Ammo" &&
-    ammoBulkItems.includes(product.name) &&
-    qty >= 10
-  ) {
-    return Math.max(product.price - 50, 0);
+  if (product.vipMode === "fixed") {
+    return getNumber(product.vipFixedPrice, normalPrice);
   }
 
-  return product.price;
+  if (product.vipMode === "percent") {
+    const vipPercent = getNumber(product.vipPercent, 15);
+    return Math.max(Math.round(normalPrice * (1 - vipPercent / 100)), 0);
+  }
+
+  return normalPrice;
+}
+
+function recalcItem(
+  item: SavedOrderItem,
+  productMap: Map<string, CatalogProduct>,
+  vipEnabled: boolean
+): SavedOrderItem {
+  const qty = Math.max(1, getNumber(item.qty, 1));
+  const product = productMap.get(item.name);
+
+  if (!product) {
+    const unitPrice = getNumber(item.unitPrice);
+    const lineTotal = unitPrice * qty;
+    const unitCost = getNumber((item as any).unitCost);
+    const unitProfit = unitPrice - unitCost;
+    const totalProfit = unitProfit * qty;
+    const commissionPercent = getNumber((item as any).commissionPercent);
+    const commissionEarned = Math.round(totalProfit * (commissionPercent / 100));
+
+    return {
+      ...item,
+      qty,
+      unitPrice,
+      lineTotal,
+      unitCost,
+      unitProfit,
+      totalProfit,
+      commissionPercent,
+      commissionEarned,
+    } as SavedOrderItem;
+  }
+
+  const unitPrice = getCatalogPrice(product, qty, vipEnabled);
+  const lineTotal = unitPrice * qty;
+  const unitCost = getNumber(product.cost);
+  const unitProfit = unitPrice - unitCost;
+  const totalProfit = unitProfit * qty;
+  const commissionPercent = getNumber((item as any).commissionPercent);
+  const commissionEarned = Math.round(totalProfit * (commissionPercent / 100));
+
+  return {
+    ...item,
+    name: product.name,
+    category: product.category,
+    qty,
+    unitPrice,
+    lineTotal,
+    unitCost,
+    unitProfit,
+    totalProfit,
+    commissionPercent,
+    commissionEarned,
+  } as SavedOrderItem;
 }
 
 export function recalcOrder(
   order: SavedOrder,
-  catalogProducts: CatalogProduct[] = defaultCatalogProducts
+  products: CatalogProduct[]
 ): SavedOrder {
-  const catalogMap = new Map(catalogProducts.map((item) => [item.name, item]));
+  const productMap = getProductMap(products);
+  const items = (order.items ?? []).map((item) =>
+    recalcItem(item, productMap, Boolean(order.vipEnabled))
+  );
 
-  const items: SavedOrderItem[] = order.items.map((item) => {
-    const product = catalogMap.get(item.name);
+  const subtotal = items.reduce(
+    (sum, item) => sum + getNumber(item.lineTotal),
+    0
+  );
 
-    if (!product) {
-      const fallbackUnitProfit = item.unitPrice - (item.storeCost ?? 0);
-      const fallbackLineProfit = fallbackUnitProfit * item.qty;
-      const fallbackCommissionPercent = item.commissionPercent ?? 0;
-      const fallbackLineCommission = Math.round(
-        fallbackLineProfit * (fallbackCommissionPercent / 100)
-      );
+  const discount = getNumber(order.discount);
+  const total = Math.max(subtotal - discount, 0);
 
-      return {
-        ...item,
-        lineTotal: item.unitPrice * item.qty,
-        storeCost: item.storeCost ?? 0,
-        unitProfit: fallbackUnitProfit,
-        lineProfit: fallbackLineProfit,
-        commissionPercent: fallbackCommissionPercent,
-        lineCommission: fallbackLineCommission,
-      };
-    }
+  const totalProfit = items.reduce(
+    (sum, item) => sum + getNumber((item as any).totalProfit),
+    0
+  );
 
-    const unitPrice = getCatalogPrice(product, item.qty, order.vipEnabled);
-    const storeCost = product.cost;
-    const unitProfit = unitPrice - storeCost;
-    const lineProfit = unitProfit * item.qty;
-    const commissionPercent = product.commissionPercent ?? 0;
-    const lineCommission = Math.round(lineProfit * (commissionPercent / 100));
-
-    return {
-      ...item,
-      category: product.category,
-      unitPrice,
-      lineTotal: unitPrice * item.qty,
-      storeCost,
-      unitProfit,
-      lineProfit,
-      commissionPercent,
-      lineCommission,
-    };
-  });
-
-  const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
-  const discount = Number(order.discount) || 0;
-  const total = subtotal - discount;
-
-  const totalCost = items.reduce((sum, item) => sum + item.storeCost * item.qty, 0);
-  const totalProfit = items.reduce((sum, item) => sum + item.lineProfit, 0);
-  const totalCommission = items.reduce((sum, item) => sum + item.lineCommission, 0);
+  const totalCommission = items.reduce(
+    (sum, item) => sum + getNumber((item as any).commissionEarned),
+    0
+  );
 
   return {
     ...order,
@@ -92,8 +126,7 @@ export function recalcOrder(
     subtotal,
     discount,
     total,
-    totalCost,
     totalProfit,
     totalCommission,
-  };
+  } as SavedOrder;
 }

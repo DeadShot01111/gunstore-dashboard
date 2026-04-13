@@ -6,12 +6,17 @@ import { signOut, useSession } from "next-auth/react";
 import BusinessPerformanceTab from "@/app/management/components/business-performance-tab";
 import CommissionsTab from "@/app/management/components/commissions-tab";
 import MaterialPurchaseTab from "@/app/management/components/material-purchase-tab";
+import OverviewTab from "@/app/management/components/overview-tab";
 import ProductManagementTab from "@/app/management/components/product-management-tab";
 
-import { getStoredCatalogProducts } from "@/lib/gunstore/catalog";
-import { getStoredOrders, saveStoredOrders } from "@/lib/gunstore/orders";
+import {
+  deleteOrderInSupabase,
+  getOrdersFromSupabase,
+  updateOrderInSupabase,
+} from "@/lib/gunstore/orders";
 import { recalcOrder } from "@/lib/gunstore/pricing";
 import { getWeekRange, isWithinWeek } from "@/lib/gunstore/week";
+import { supabase } from "@/lib/supabase/client";
 import {
   CatalogProduct,
   SavedOrder,
@@ -26,6 +31,18 @@ type ManagerTab =
   | "commissions"
   | "business_performance";
 
+type ProductRow = {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  cost: number;
+  vip_mode: "none" | "percent" | "fixed";
+  vip_percent: number | null;
+  vip_fixed_price: number | null;
+  active: boolean;
+};
+
 const tabs: { key: ManagerTab; label: string }[] = [
   { key: "sales_logs", label: "Sales Logs" },
   { key: "material_purchase", label: "Material Purchase" },
@@ -39,8 +56,26 @@ function formatMoney(value: number) {
   return `$${value.toLocaleString()}`;
 }
 
+function formatDisplayDate(value: string | Date) {
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDisplayDateTime(value: string | Date) {
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const hours = `${date.getHours()}`.padStart(2, "0");
+  const minutes = `${date.getMinutes()}`.padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString();
+  return formatDisplayDateTime(value);
 }
 
 function toDateTimeLocalValue(value: string) {
@@ -60,6 +95,19 @@ function cloneOrder(order: SavedOrder): SavedOrder {
   };
 }
 
+function toCatalogProduct(row: ProductRow): CatalogProduct {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    price: Number(row.price ?? 0),
+    cost: Number(row.cost ?? 0),
+    vipMode: row.vip_mode ?? "none",
+    vipPercent: row.vip_percent ?? undefined,
+    vipFixedPrice: row.vip_fixed_price ?? undefined,
+  } as CatalogProduct;
+}
+
 export default function ManagementPage() {
   const { data: session } = useSession();
 
@@ -70,11 +118,46 @@ export default function ManagementPage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [draftOrder, setDraftOrder] = useState<SavedOrder | null>(null);
   const [saveMessage, setSaveMessage] = useState("");
+  const [loadingOrders, setLoadingOrders] = useState(true);
+  const [savingOrder, setSavingOrder] = useState(false);
 
   useEffect(() => {
-    setOrders(getStoredOrders());
-    setCatalogProducts(getStoredCatalogProducts());
+    void loadPageData();
   }, []);
+
+  async function loadPageData() {
+    setLoadingOrders(true);
+
+    try {
+      const [loadedOrders, productsResult] = await Promise.all([
+        getOrdersFromSupabase(),
+        supabase
+          .from("products")
+          .select("*")
+          .eq("active", true)
+          .order("category", { ascending: true })
+          .order("name", { ascending: true }),
+      ]);
+
+      setOrders(loadedOrders);
+
+      if (!productsResult.error && Array.isArray(productsResult.data)) {
+        setCatalogProducts((productsResult.data as ProductRow[]).map(toCatalogProduct));
+      } else {
+        setSaveMessage(
+          `Failed to load products: ${productsResult.error?.message ?? "Unknown error"}`
+        );
+        setTimeout(() => setSaveMessage(""), 2500);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load sales logs.";
+      setSaveMessage(message);
+      setTimeout(() => setSaveMessage(""), 2500);
+    } finally {
+      setLoadingOrders(false);
+    }
+  }
 
   const selectedOrder = useMemo(() => {
     return orders.find((order) => order.id === selectedOrderId) ?? null;
@@ -199,30 +282,40 @@ export default function ManagementPage() {
     );
   }
 
-  function saveDraftOrder() {
+  async function saveDraftOrder() {
     if (!draftOrder) return;
 
-    const finalOrder = recalcOrder(
-      {
-        ...draftOrder,
-        createdAt: new Date(draftOrder.createdAt).toISOString(),
-        status: draftOrder.status ?? "Edited",
-      },
-      catalogProducts
-    );
+    setSavingOrder(true);
 
-    const updatedOrders = orders.map((order) =>
-      order.id === finalOrder.id ? finalOrder : order
-    );
+    try {
+      const finalOrder = recalcOrder(
+        {
+          ...draftOrder,
+          createdAt: new Date(draftOrder.createdAt).toISOString(),
+          status: draftOrder.status ?? "Edited",
+        },
+        catalogProducts
+      );
 
-    setOrders(updatedOrders);
-    saveStoredOrders(updatedOrders);
+      await updateOrderInSupabase(finalOrder);
 
-    setSaveMessage("Sales log updated.");
-    setTimeout(() => setSaveMessage(""), 2200);
+      const refreshedOrders = await getOrdersFromSupabase();
+      setOrders(refreshedOrders);
+      setSelectedOrderId(finalOrder.id);
+
+      setSaveMessage("Sales log updated.");
+      setTimeout(() => setSaveMessage(""), 2200);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to update sale log.";
+      setSaveMessage(message);
+      setTimeout(() => setSaveMessage(""), 2500);
+    } finally {
+      setSavingOrder(false);
+    }
   }
 
-  function deleteSelectedOrder() {
+  async function deleteSelectedOrder() {
     if (!selectedOrderId) return;
 
     const confirmed = window.confirm(
@@ -231,15 +324,26 @@ export default function ManagementPage() {
 
     if (!confirmed) return;
 
-    const updatedOrders = orders.filter((order) => order.id !== selectedOrderId);
+    setSavingOrder(true);
 
-    setOrders(updatedOrders);
-    saveStoredOrders(updatedOrders);
-    setSelectedOrderId(null);
-    setDraftOrder(null);
+    try {
+      await deleteOrderInSupabase(selectedOrderId);
 
-    setSaveMessage("Sales log deleted.");
-    setTimeout(() => setSaveMessage(""), 2200);
+      const refreshedOrders = await getOrdersFromSupabase();
+      setOrders(refreshedOrders);
+      setSelectedOrderId(null);
+      setDraftOrder(null);
+
+      setSaveMessage("Sales log deleted.");
+      setTimeout(() => setSaveMessage(""), 2200);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to delete sale log.";
+      setSaveMessage(message);
+      setTimeout(() => setSaveMessage(""), 2500);
+    } finally {
+      setSavingOrder(false);
+    }
   }
 
   const displayName =
@@ -254,35 +358,6 @@ export default function ManagementPage() {
       : (session?.user as any)?.role === "employee"
       ? "Employee"
       : "Unauthorized";
-
-  function renderOverview() {
-    const totalSales = weekOrders.reduce((sum, row) => sum + row.total, 0);
-    const totalDiscounts = weekOrders.reduce((sum, row) => sum + row.discount, 0);
-    const totalOrders = weekOrders.length;
-
-    return (
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
-        <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-          <div className="text-xs text-zinc-400">Week Sales</div>
-          <div className="mt-2 text-2xl font-bold text-white">
-            {formatMoney(totalSales)}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-          <div className="text-xs text-zinc-400">Week Discounts</div>
-          <div className="mt-2 text-2xl font-bold text-green-300">
-            {formatMoney(totalDiscounts)}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-          <div className="text-xs text-zinc-400">Week Orders</div>
-          <div className="mt-2 text-2xl font-bold text-white">{totalOrders}</div>
-        </div>
-      </div>
-    );
-  }
 
   function renderSalesLogs() {
     return (
@@ -305,7 +380,7 @@ export default function ManagementPage() {
               </button>
 
               <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-1.5 text-xs text-zinc-300">
-                {weekRange.start.toLocaleDateString()} - {weekRange.end.toLocaleDateString()}
+                {formatDisplayDate(weekRange.start)} - {formatDisplayDate(weekRange.end)}
               </div>
 
               <button
@@ -321,44 +396,50 @@ export default function ManagementPage() {
             Do not delete any sales from the sales log table unless absolutely necessary. Use edits and notes to correct records when possible.
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="text-zinc-400">
-                <tr className="border-b border-white/10">
-                  <th className="pb-2 font-medium">Date</th>
-                  <th className="pb-2 font-medium">Employee</th>
-                  <th className="pb-2 font-medium">VIP</th>
-                  <th className="pb-2 font-medium">Subtotal</th>
-                  <th className="pb-2 font-medium">Total</th>
-                  <th className="pb-2 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {weekOrders.map((row) => (
-                  <tr
-                    key={row.id}
-                    onClick={() => setSelectedOrderId(row.id)}
-                    className={`cursor-pointer border-b border-white/5 transition hover:bg-white/5 ${
-                      selectedOrderId === row.id ? "bg-white/5" : ""
-                    }`}
-                  >
-                    <td className="py-3 text-white">{formatDateTime(row.createdAt)}</td>
-                    <td className="py-3 text-white">{row.employeeName}</td>
-                    <td className="py-3 text-zinc-300">{row.vipEnabled ? "Yes" : "No"}</td>
-                    <td className="py-3 text-white">{formatMoney(row.subtotal)}</td>
-                    <td className="py-3 text-white">{formatMoney(row.total)}</td>
-                    <td className="py-3 text-zinc-300">{row.status ?? "Completed"}</td>
+          {loadingOrders ? (
+            <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-zinc-400">
+              Loading sales logs...
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="text-zinc-400">
+                  <tr className="border-b border-white/10">
+                    <th className="pb-2 font-medium">Date</th>
+                    <th className="pb-2 font-medium">Employee</th>
+                    <th className="pb-2 font-medium">VIP</th>
+                    <th className="pb-2 font-medium">Subtotal</th>
+                    <th className="pb-2 font-medium">Total</th>
+                    <th className="pb-2 font-medium">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {weekOrders.map((row) => (
+                    <tr
+                      key={row.id}
+                      onClick={() => setSelectedOrderId(row.id)}
+                      className={`cursor-pointer border-b border-white/5 transition hover:bg-white/5 ${
+                        selectedOrderId === row.id ? "bg-white/5" : ""
+                      }`}
+                    >
+                      <td className="py-3 text-white">{formatDateTime(row.createdAt)}</td>
+                      <td className="py-3 text-white">{row.employeeName}</td>
+                      <td className="py-3 text-zinc-300">{row.vipEnabled ? "Yes" : "No"}</td>
+                      <td className="py-3 text-white">{formatMoney(row.subtotal)}</td>
+                      <td className="py-3 text-white">{formatMoney(row.total)}</td>
+                      <td className="py-3 text-zinc-300">{row.status ?? "Completed"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
 
-            {weekOrders.length === 0 && (
-              <div className="py-8 text-center text-sm text-zinc-400">
-                No sales found for this week.
-              </div>
-            )}
-          </div>
+              {weekOrders.length === 0 && (
+                <div className="py-8 text-center text-sm text-zinc-400">
+                  No sales found for this week.
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="col-span-12 rounded-xl border border-white/10 bg-black/20 p-4 xl:col-span-5">
@@ -549,16 +630,18 @@ export default function ManagementPage() {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={saveDraftOrder}
-                  className="w-full rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-500"
+                  disabled={savingOrder}
+                  className="w-full rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-60"
                 >
-                  Save Changes
+                  {savingOrder ? "Saving..." : "Save Changes"}
                 </button>
 
                 <button
                   onClick={deleteSelectedOrder}
-                  className="w-full rounded-lg border border-red-400/20 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-300 hover:bg-red-500/20"
+                  disabled={savingOrder}
+                  className="w-full rounded-lg border border-red-400/20 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-300 hover:bg-red-500/20 disabled:opacity-60"
                 >
-                  Delete Sale Log
+                  {savingOrder ? "Working..." : "Delete Sale Log"}
                 </button>
               </div>
             </div>
@@ -581,11 +664,21 @@ export default function ManagementPage() {
       case "business_performance":
         return <BusinessPerformanceTab />;
       case "overview":
-        return renderOverview();
+        return <OverviewTab onNavigate={setActiveTab} />;
       default:
         return renderSalesLogs();
     }
-  }, [activeTab, weekOrders, selectedOrderId, draftOrder, saveMessage, weekRange, catalogProducts]);
+  }, [
+    activeTab,
+    weekOrders,
+    selectedOrderId,
+    draftOrder,
+    saveMessage,
+    weekRange,
+    catalogProducts,
+    loadingOrders,
+    savingOrder,
+  ]);
 
   return (
     <main className="min-h-screen text-white">

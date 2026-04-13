@@ -3,14 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { signOut } from "next-auth/react";
 
+import { ammoBulkItems, categories } from "@/lib/gunstore/catalog";
 import {
-  ammoBulkItems,
-  categories,
-  getStoredCatalogProducts,
-} from "@/lib/gunstore/catalog";
+  CommissionRateRecord,
+  getCommissionPercentForProduct,
+  getCommissionRatesFromSupabase,
+} from "@/lib/gunstore/commissions";
+import { createOrderInSupabase } from "@/lib/gunstore/orders";
 import { getCatalogPrice } from "@/lib/gunstore/pricing";
-import { getStoredOrders, saveStoredOrders } from "@/lib/gunstore/orders";
-import { CartItem, CatalogProduct, SavedOrder } from "@/lib/gunstore/types";
+import { supabase } from "@/lib/supabase/client";
+import { CartItem, CatalogProduct } from "@/lib/gunstore/types";
 
 type EmployeeClientProps = {
   user: {
@@ -20,32 +22,95 @@ type EmployeeClientProps = {
     nickname?: string | null;
     avatar?: string | null;
     role?: string | null;
+    discordId?: string | null;
   };
   role?: string;
 };
+
+type ProductRow = {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  cost: number;
+  vip_mode: "none" | "percent" | "fixed";
+  vip_percent: number | null;
+  vip_fixed_price: number | null;
+  active: boolean;
+};
+
+function toCatalogProduct(row: ProductRow): CatalogProduct {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    price: Number(row.price ?? 0),
+    cost: Number(row.cost ?? 0),
+    vipMode: row.vip_mode ?? "none",
+    vipPercent: row.vip_percent ?? undefined,
+    vipFixedPrice: row.vip_fixed_price ?? undefined,
+  } as CatalogProduct;
+}
+
+function getProductCost(product: CatalogProduct) {
+  return Number(product.cost ?? 0);
+}
 
 export default function EmployeeClient({
   user,
   role = "employee",
 }: EmployeeClientProps) {
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
+  const [commissionRates, setCommissionRates] = useState<CommissionRateRecord[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [vipEnabled, setVipEnabled] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [search, setSearch] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [submittingOrder, setSubmittingOrder] = useState(false);
 
   useEffect(() => {
-    setCatalogProducts(getStoredCatalogProducts());
+    void loadEmployeeData();
   }, []);
 
-  const roleLabel = role === "management" ? "Management" : "Employee";
+  async function loadEmployeeData() {
+    setLoadingProducts(true);
+
+    try {
+      const [productsResult, loadedRates] = await Promise.all([
+        supabase
+          .from("products")
+          .select("*")
+          .eq("active", true)
+          .order("category", { ascending: true })
+          .order("name", { ascending: true }),
+        getCommissionRatesFromSupabase(),
+      ]);
+
+      if (!productsResult.error && Array.isArray(productsResult.data)) {
+        setCatalogProducts((productsResult.data as ProductRow[]).map(toCatalogProduct));
+      } else if (productsResult.error) {
+        setSuccessMessage(`Failed to load products: ${productsResult.error.message}`);
+        setTimeout(() => setSuccessMessage(""), 2500);
+      }
+
+      setCommissionRates(loadedRates);
+    } catch (error) {
+      console.error(error);
+      setSuccessMessage("Failed to load employee data.");
+      setTimeout(() => setSuccessMessage(""), 2500);
+    } finally {
+      setLoadingProducts(false);
+    }
+  }
 
   const employee = {
     name: user.nickname ?? user.name ?? "Unknown User",
-    role: roleLabel,
+    role: role === "management" ? "Management" : "Employee",
     image: user.avatar ?? user.image ?? null,
     email: user.email ?? "",
+    discordId: user.discordId ?? null,
   };
 
   function addToCart(product: CatalogProduct) {
@@ -78,53 +143,82 @@ export default function EmployeeClient({
     setCart([]);
   }
 
-  function finalizeOrder() {
+  async function finalizeOrder() {
     if (cart.length === 0) {
       setSuccessMessage("Cart is empty.");
       setTimeout(() => setSuccessMessage(""), 2200);
       return;
     }
 
-    const rawSubtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+    setSubmittingOrder(true);
 
-    const orderItems = cart.map((item) => {
-      const unitPrice = getCatalogPrice(item, item.qty, vipEnabled);
+    try {
+      const rawSubtotal = cart.reduce(
+        (sum, item) => sum + Number(item.price ?? 0) * item.qty,
+        0
+      );
 
-      return {
-        name: item.name,
-        category: item.category,
-        qty: item.qty,
-        unitPrice,
-        lineTotal: unitPrice * item.qty,
-      };
-    });
+      const orderItems = cart.map((item) => {
+        const unitPrice = getCatalogPrice(item, item.qty, vipEnabled);
+        const unitCost = getProductCost(item);
+        const commissionPercent = getCommissionPercentForProduct(
+          item.name,
+          commissionRates
+        );
 
-    const subtotal = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
-    const discount = rawSubtotal - subtotal;
-    const total = subtotal;
+        const unitProfit = Math.max(unitPrice - unitCost, 0);
+        const totalProfit = unitProfit * item.qty;
+        const commissionEarned = Math.round(totalProfit * (commissionPercent / 100));
 
-    const order: SavedOrder = {
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-      employeeName: employee.name,
-      employeeEmail: employee.email,
-      role: employee.role,
-      vipEnabled,
-      items: orderItems,
-      subtotal,
-      discount,
-      total,
-      status: "Completed",
-      notes: "",
-    };
+        return {
+          productId: (item as any).id ?? null,
+          name: item.name,
+          category: item.category,
+          qty: item.qty,
+          unitPrice,
+          lineTotal: unitPrice * item.qty,
+          unitCost,
+          unitProfit,
+          totalProfit,
+          commissionPercent,
+          commissionEarned,
+        };
+      });
 
-    const existingOrders = getStoredOrders();
-    saveStoredOrders([order, ...existingOrders]);
+      const subtotal = orderItems.reduce((sum, item) => sum + item.lineTotal, 0);
+      const discount = rawSubtotal - subtotal;
+      const total = subtotal;
+      const totalProfit = orderItems.reduce(
+        (sum, item) => sum + Number(item.totalProfit ?? 0),
+        0
+      );
 
-    setCart([]);
-    setVipEnabled(false);
-    setSuccessMessage("Order finalized and saved.");
-    setTimeout(() => setSuccessMessage(""), 2200);
+      await createOrderInSupabase({
+        employeeDiscordId: employee.discordId,
+        employeeName: employee.name,
+        employeeEmail: employee.email,
+        role: employee.role,
+        vipEnabled,
+        subtotal,
+        discount,
+        total,
+        totalProfit,
+        status: "Completed",
+        notes: "",
+        items: orderItems,
+      });
+
+      setCart([]);
+      setVipEnabled(false);
+      setSuccessMessage("Order saved to database.");
+      setTimeout(() => setSuccessMessage(""), 2200);
+    } catch (error) {
+      console.error(error);
+      setSuccessMessage("Failed to save order.");
+      setTimeout(() => setSuccessMessage(""), 2200);
+    } finally {
+      setSubmittingOrder(false);
+    }
   }
 
   const filtered = useMemo(() => {
@@ -143,13 +237,14 @@ export default function EmployeeClient({
   );
 
   const rawSubtotal = useMemo(
-    () => cart.reduce((sum, i) => sum + i.price * i.qty, 0),
+    () => cart.reduce((sum, i) => sum + Number(i.price ?? 0) * i.qty, 0),
     [cart]
   );
 
   const pricedCart = useMemo(() => {
     return cart.map((item) => {
       const unitPrice = getCatalogPrice(item, item.qty, vipEnabled);
+
       return {
         ...item,
         effectivePrice: unitPrice,
@@ -266,53 +361,59 @@ export default function EmployeeClient({
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                <div className="grid grid-cols-1 gap-2.5 2xl:grid-cols-2">
-                  {filtered.map((p) => {
-                    const price = getCatalogPrice(p, 1, vipEnabled);
-                    const showBulk =
-                      !vipEnabled &&
-                      p.category === "Ammo" &&
-                      ammoBulkItems.includes(p.name);
+                {loadingProducts ? (
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-zinc-400">
+                    Loading products...
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2.5 2xl:grid-cols-2">
+                    {filtered.map((p) => {
+                      const price = getCatalogPrice(p, 1, vipEnabled);
+                      const showBulk =
+                        !vipEnabled &&
+                        p.category === "Ammo" &&
+                        ammoBulkItems.includes(p.name);
 
-                    return (
-                      <button
-                        key={p.name}
-                        onClick={() => addToCart(p)}
-                        className="rounded-xl border border-white/10 bg-black/25 p-3 text-left backdrop-blur-xl transition hover:border-red-400/40 hover:bg-red-500/10"
-                      >
-                        <div className="flex min-h-[96px] flex-col justify-between">
-                          <div>
-                            <div className="text-[10px] uppercase tracking-wide text-zinc-400">
-                              {p.category}
+                      return (
+                        <button
+                          key={p.name}
+                          onClick={() => addToCart(p)}
+                          className="rounded-xl border border-white/10 bg-black/25 p-3 text-left backdrop-blur-xl transition hover:border-red-400/40 hover:bg-red-500/10"
+                        >
+                          <div className="flex min-h-[96px] flex-col justify-between">
+                            <div>
+                              <div className="text-[10px] uppercase tracking-wide text-zinc-400">
+                                {p.category}
+                              </div>
+
+                              <div className="mt-1 text-lg font-semibold text-white">
+                                {p.name}
+                              </div>
                             </div>
 
-                            <div className="mt-1 text-lg font-semibold text-white">
-                              {p.name}
+                            <div>
+                              <div className="mt-2 text-2xl font-medium leading-none text-red-400">
+                                ${p.price}
+                              </div>
+
+                              {vipEnabled && price !== p.price && (
+                                <div className="mt-1.5 text-[11px] text-green-300">
+                                  VIP: ${price}
+                                </div>
+                              )}
+
+                              {showBulk && (
+                                <div className="mt-1.5 text-[10px] text-zinc-400">
+                                  10+ units: ${p.price - 50} each
+                                </div>
+                              )}
                             </div>
                           </div>
-
-                          <div>
-                            <div className="mt-2 text-2xl font-medium leading-none text-red-400">
-                              ${p.price}
-                            </div>
-
-                            {vipEnabled && price !== p.price && (
-                              <div className="mt-1.5 text-[11px] text-green-300">
-                                VIP: ${price}
-                              </div>
-                            )}
-
-                            {showBulk && (
-                              <div className="mt-1.5 text-[10px] text-zinc-400">
-                                10+ units: ${p.price - 50} each
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </section>
 
@@ -443,9 +544,10 @@ export default function EmployeeClient({
 
                 <button
                   onClick={finalizeOrder}
-                  className="mt-3 w-full rounded-lg bg-white/90 px-4 py-2.5 text-xs font-semibold text-black hover:bg-white"
+                  disabled={submittingOrder}
+                  className="mt-3 w-full rounded-lg bg-white/90 px-4 py-2.5 text-xs font-semibold text-black hover:bg-white disabled:opacity-60"
                 >
-                  Finalize Order
+                  {submittingOrder ? "Saving..." : "Finalize Order"}
                 </button>
               </div>
             </aside>

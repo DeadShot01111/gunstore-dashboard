@@ -504,9 +504,11 @@ export default function ManagementPage() {
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">Status</label>
                   <select
-                    value={draftOrder.status ?? "Completed"}
-                    onChange={(e) => updateDraftField("status", e.target.value)}
-                    className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                    value={(draftOrder.status ?? "Completed") as SavedOrderStatus}
+                    onChange={(e) =>
+                      updateDraftField("status", e.target.value as SavedOrderStatus)
+                    }
+                    className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white"
                   >
                     <option value="Completed">Completed</option>
                     <option value="Edited">Edited</option>

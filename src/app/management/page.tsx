@@ -508,7 +508,7 @@ export default function ManagementPage() {
                     onChange={(e) =>
                       updateDraftField("status", e.target.value as SavedOrderStatus)
                     }
-                    className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white"
+                    className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
                   >
                     <option value="Completed">Completed</option>
                     <option value="Edited">Edited</option>

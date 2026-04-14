@@ -45,6 +45,7 @@ function formatMoney(value: number) {
 
 function toCatalogProduct(row: ProductRow): CatalogProduct {
   return {
+    id: row.id,
     name: row.name,
     category: row.category,
     price: Number(row.price ?? 0),
@@ -246,9 +247,12 @@ export default function ProductManagementTab() {
 
   return (
     <div className="grid grid-cols-12 gap-3">
-      <div className="col-span-12 rounded-xl border border-white/10 bg-black/20 p-4 xl:col-span-4">
+      <div className="col-span-12 rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.02))] p-4 shadow-[0_14px_35px_rgba(0,0,0,0.16)] xl:col-span-4">
         <div className="mb-4">
-          <div className="text-sm font-semibold text-white">Add New Product</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
+            Catalog Entry
+          </div>
+          <div className="mt-1 text-sm font-semibold text-white">Add New Product</div>
           <div className="text-xs text-zinc-400">
             Create items with sale price, store cost, and VIP pricing.
           </div>
@@ -266,7 +270,7 @@ export default function ProductManagementTab() {
                 }))
               }
               placeholder="Enter product name"
-              className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-500"
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-500"
             />
           </div>
 
@@ -280,7 +284,7 @@ export default function ProductManagementTab() {
                   category: e.target.value,
                 }))
               }
-              className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
             >
               {categories
                 .filter((category) => category !== "All")
@@ -305,7 +309,7 @@ export default function ProductManagementTab() {
                     price: Number(e.target.value),
                   }))
                 }
-                className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
               />
             </div>
 
@@ -321,7 +325,7 @@ export default function ProductManagementTab() {
                     cost: Number(e.target.value),
                   }))
                 }
-                className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
               />
             </div>
           </div>
@@ -336,7 +340,7 @@ export default function ProductManagementTab() {
                   vipMode: e.target.value as VipMode,
                 }))
               }
-              className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
             >
               <option value="none">none</option>
               <option value="percent">percent</option>
@@ -357,7 +361,7 @@ export default function ProductManagementTab() {
                     vipPercent: Number(e.target.value),
                   }))
                 }
-                className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
               />
             </div>
           )}
@@ -377,12 +381,12 @@ export default function ProductManagementTab() {
                     vipFixedPrice: Number(e.target.value),
                   }))
                 }
-                className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
               />
             </div>
           )}
 
-          <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-zinc-400">
+          <div className="rounded-[18px] border border-white/8 bg-black/20 p-3 text-xs text-zinc-400">
             <div>Normal Profit: {formatMoney(Math.max(form.price - form.cost, 0))}</div>
             <div className="mt-1">
               VIP Profit:{" "}
@@ -402,31 +406,34 @@ export default function ProductManagementTab() {
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={addNewProduct}
-              className="w-full rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-500"
+              className="w-full rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(220,38,38,0.2)] hover:bg-red-500"
             >
               Add Product
             </button>
 
             <button
               onClick={resetForm}
-              className="w-full rounded-lg border border-white/10 bg-black/20 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10"
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10"
             >
               Clear Form
             </button>
           </div>
 
           {saveMessage && (
-            <div className="rounded-lg border border-green-400/20 bg-green-500/10 px-3 py-2 text-xs text-green-300">
+            <div className="rounded-[18px] border border-green-400/20 bg-green-500/10 px-3 py-2 text-xs text-green-300">
               {saveMessage}
             </div>
           )}
         </div>
       </div>
 
-      <div className="col-span-12 rounded-xl border border-white/10 bg-black/20 p-4 xl:col-span-8">
+      <div className="col-span-12 rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.02))] p-4 shadow-[0_14px_35px_rgba(0,0,0,0.16)] xl:col-span-8">
         <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <div className="text-sm font-semibold text-white">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
+              Catalog Editor
+            </div>
+            <div className="mt-1 text-sm font-semibold text-white">
               Product Catalog
             </div>
             <div className="text-xs text-zinc-400">
@@ -439,13 +446,13 @@ export default function ProductManagementTab() {
               placeholder="Search product..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full min-w-[200px] rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-500"
+              className="w-full min-w-[200px] rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-500"
             />
 
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full min-w-[160px] rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+              className="w-full min-w-[160px] rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
             >
               {categories.map((category) => (
                 <option key={category} value={category}>
@@ -457,14 +464,14 @@ export default function ProductManagementTab() {
             <button
               onClick={saveAllChanges}
               disabled={savingAll}
-              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-60"
+              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(220,38,38,0.2)] hover:bg-red-500 disabled:opacity-60"
             >
               {savingAll ? "Saving..." : "Save All Changes"}
             </button>
           </div>
         </div>
 
-        <div className="mb-4 rounded-lg border border-white/10 bg-black/20 p-3">
+        <div className="mb-4 rounded-[18px] border border-white/8 bg-black/20 p-3">
           <div className="flex items-center justify-between text-sm">
             <span className="text-zinc-400">Products Shown</span>
             <span className="font-semibold text-white">{filteredProducts.length}</span>
@@ -472,7 +479,7 @@ export default function ProductManagementTab() {
         </div>
 
         {loading ? (
-          <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-zinc-400">
+          <div className="rounded-[18px] border border-white/8 bg-black/20 p-4 text-sm text-zinc-400">
             Loading products...
           </div>
         ) : (
@@ -483,7 +490,7 @@ export default function ProductManagementTab() {
               return (
                 <div
                   key={product.id}
-                  className="rounded-xl border border-white/10 bg-black/20 p-4"
+                  className="rounded-[22px] border border-white/8 bg-black/20 p-4"
                 >
                   <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
                     <div>
@@ -491,14 +498,14 @@ export default function ProductManagementTab() {
                         {product.name}
                       </div>
                       <div className="mt-1 text-xs text-zinc-400">
-                        Normal Profit: {formatMoney(getNormalUnitProfit(catalogProduct))} • VIP Profit:{" "}
+                        Normal Profit: {formatMoney(getNormalUnitProfit(catalogProduct))} | VIP Profit:{" "}
                         {formatMoney(getVipUnitProfit(catalogProduct))}
                       </div>
                     </div>
 
                     <button
                       onClick={() => deleteProduct(product.id, product.name)}
-                      className="rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-300 hover:bg-red-500/20"
+                      className="rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-300 hover:bg-red-500/20"
                     >
                       Delete Product
                     </button>
@@ -512,7 +519,7 @@ export default function ProductManagementTab() {
                         onChange={(e) =>
                           updateLocalProduct(product.id, "category", e.target.value)
                         }
-                        className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                        className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
                       >
                         {categories
                           .filter((category) => category !== "All")
@@ -533,7 +540,7 @@ export default function ProductManagementTab() {
                         onChange={(e) =>
                           updateLocalProduct(product.id, "price", Number(e.target.value))
                         }
-                        className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                        className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
                       />
                     </div>
 
@@ -546,7 +553,7 @@ export default function ProductManagementTab() {
                         onChange={(e) =>
                           updateLocalProduct(product.id, "cost", Number(e.target.value))
                         }
-                        className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                        className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
                       />
                     </div>
 
@@ -557,7 +564,7 @@ export default function ProductManagementTab() {
                         onChange={(e) =>
                           updateLocalProduct(product.id, "vip_mode", e.target.value as VipMode)
                         }
-                        className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                        className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
                       >
                         <option value="none">none</option>
                         <option value="percent">percent</option>
@@ -576,7 +583,7 @@ export default function ProductManagementTab() {
                         onChange={(e) =>
                           updateLocalProduct(product.id, "vip_percent", Number(e.target.value))
                         }
-                        className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                        className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
                       />
                     </div>
 
@@ -595,7 +602,7 @@ export default function ProductManagementTab() {
                             Number(e.target.value)
                           )
                         }
-                        className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                        className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
                       />
                     </div>
                   </div>
@@ -604,7 +611,7 @@ export default function ProductManagementTab() {
             })}
 
             {filteredProducts.length === 0 && (
-              <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-zinc-400">
+              <div className="rounded-[18px] border border-white/8 bg-black/20 p-4 text-sm text-zinc-400">
                 No products found.
               </div>
             )}

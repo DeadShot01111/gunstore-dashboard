@@ -8,6 +8,7 @@ export type CatalogCategory =
   | "All";
 
 export type CatalogProduct = {
+  id?: string;
   name: string;
   category: string;
   price: number;
@@ -26,6 +27,7 @@ export type CartItem = CatalogProduct & {
 };
 
 export type SavedOrderItem = {
+  productId?: string | null;
   name: string;
   category: string;
   qty: number;
@@ -36,6 +38,8 @@ export type SavedOrderItem = {
   unitCost?: number;
   unitProfit?: number;
   totalProfit?: number;
+  commissionPercent?: number;
+  commissionEarned?: number;
 };
 
 export type SavedOrderStatus =
@@ -59,6 +63,7 @@ export type SavedOrder = {
 
   // order-level profit summary
   totalProfit?: number;
+  totalCommission?: number;
 
   status?: SavedOrderStatus;
   notes?: string;

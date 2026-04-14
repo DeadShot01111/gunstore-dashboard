@@ -16,6 +16,12 @@ export type CommissionPayoutRecord = {
   notes?: string;
 };
 
+export type PersonOverrideRecord = {
+  id: string;
+  employeeName: string;
+  commissionPercent: number;
+};
+
 type DbCommissionRateRow = {
   id: string;
   product_name: string;
@@ -28,6 +34,12 @@ type DbCommissionPayoutRow = {
   employee_name: string;
   status: string;
   notes: string | null;
+};
+
+type DbPersonOverrideRow = {
+  id: string;
+  employee_name: string;
+  commission_percent: number;
 };
 
 function toCommissionRate(row: DbCommissionRateRow): CommissionRateRecord {
@@ -48,6 +60,14 @@ function toCommissionPayout(row: DbCommissionPayoutRow): CommissionPayoutRecord 
   };
 }
 
+function toPersonOverride(row: DbPersonOverrideRow): PersonOverrideRecord {
+  return {
+    id: row.id,
+    employeeName: row.employee_name,
+    commissionPercent: Number(row.commission_percent ?? 0),
+  };
+}
+
 export async function getCommissionRatesFromSupabase(): Promise<CommissionRateRecord[]> {
   const { data, error } = await supabase
     .from("commission_rates")
@@ -55,27 +75,11 @@ export async function getCommissionRatesFromSupabase(): Promise<CommissionRateRe
     .order("product_name", { ascending: true });
 
   if (error) {
+    console.error("getCommissionRatesFromSupabase error:", error);
     throw new Error(error.message);
   }
 
   return ((data ?? []) as DbCommissionRateRow[]).map(toCommissionRate);
-}
-
-export async function upsertCommissionRateInSupabase(params: {
-  productName: string;
-  commissionPercent: number;
-}) {
-  const { error } = await supabase.from("commission_rates").upsert(
-    {
-      product_name: params.productName,
-      commission_percent: Number(params.commissionPercent ?? 0),
-    },
-    { onConflict: "product_name" }
-  );
-
-  if (error) {
-    throw new Error(error.message);
-  }
 }
 
 export async function saveCommissionRatesBatchInSupabase(
@@ -91,6 +95,7 @@ export async function saveCommissionRatesBatchInSupabase(
     .upsert(payload, { onConflict: "product_name" });
 
   if (error) {
+    console.error("saveCommissionRatesBatchInSupabase error:", error);
     throw new Error(error.message);
   }
 }
@@ -102,6 +107,7 @@ export async function getCommissionPayoutsFromSupabase(): Promise<CommissionPayo
     .order("week_start", { ascending: false });
 
   if (error) {
+    console.error("getCommissionPayoutsFromSupabase error:", error);
     throw new Error(error.message);
   }
 
@@ -114,49 +120,62 @@ export async function upsertCommissionPayoutInSupabase(params: {
   status: CommissionStatus;
   notes?: string;
 }) {
-  const { data: existing, error: fetchError } = await supabase
-    .from("commission_payouts")
-    .select("id")
-    .eq("week_start", params.weekStart)
-    .eq("employee_name", params.employeeName)
-    .maybeSingle();
-
-  if (fetchError) {
-    throw new Error(fetchError.message);
-  }
-
-  if (existing?.id) {
-    const { error } = await supabase
-      .from("commission_payouts")
-      .update({
-        status: params.status,
-        notes: params.notes ?? "",
-      })
-      .eq("id", existing.id);
-
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    return existing.id;
-  }
-
-  const { data, error } = await supabase
-    .from("commission_payouts")
-    .insert({
+  const payload = [
+    {
       week_start: params.weekStart,
       employee_name: params.employeeName,
       status: params.status,
       notes: params.notes ?? "",
+    },
+  ];
+
+  const { data, error } = await supabase
+    .from("commission_payouts")
+    .upsert(payload, {
+      onConflict: "week_start,employee_name",
     })
-    .select("id")
-    .single();
+    .select();
 
   if (error) {
+    console.error("upsertCommissionPayoutInSupabase error:", error);
     throw new Error(error.message);
   }
 
-  return data.id as string;
+  return data;
+}
+
+export async function getPersonOverridesFromSupabase(): Promise<PersonOverrideRecord[]> {
+  const { data, error } = await supabase
+    .from("commission_person_overrides")
+    .select("*")
+    .order("employee_name", { ascending: true });
+
+  if (error) {
+    console.error("getPersonOverridesFromSupabase error:", error);
+    throw new Error(error.message);
+  }
+
+  return ((data ?? []) as DbPersonOverrideRow[]).map(toPersonOverride);
+}
+
+export async function upsertPersonOverrideInSupabase(params: {
+  employeeName: string;
+  commissionPercent: number;
+}) {
+  const { error } = await supabase
+    .from("commission_person_overrides")
+    .upsert(
+      {
+        employee_name: params.employeeName,
+        commission_percent: Number(params.commissionPercent ?? 0),
+      },
+      { onConflict: "employee_name" }
+    );
+
+  if (error) {
+    console.error("upsertPersonOverrideInSupabase error:", error);
+    throw new Error(error.message);
+  }
 }
 
 export function getCommissionPercentForProduct(

@@ -24,6 +24,16 @@ export type WeeklyBusinessSummary = {
   projectedProfit: number;
 };
 
+type WeeklyEmployeeItemBreakdown = {
+  employeeName: string;
+  itemName: string;
+  category: string;
+  quantitySold: number;
+  salesRevenue: number;
+  profit: number;
+  commissionEarned: number;
+};
+
 function moneyFormat(cell: ExcelJS.Cell) {
   cell.numFmt = '$#,##0;[Red]-$#,##0';
 }
@@ -109,6 +119,50 @@ function downloadBuffer(buffer: ArrayBuffer, filename: string) {
   window.URL.revokeObjectURL(url);
 }
 
+function buildWeeklyEmployeeItemBreakdown(
+  weekOrders: SavedOrder[]
+): WeeklyEmployeeItemBreakdown[] {
+  const grouped = new Map<string, WeeklyEmployeeItemBreakdown>();
+
+  weekOrders.forEach((order) => {
+    order.items.forEach((item) => {
+      const employeeName = order.employeeName ?? "Unknown Employee";
+      const itemName = item.name ?? "Unknown Item";
+      const category = item.category ?? "";
+      const key = `${employeeName}__${itemName}__${category}`;
+
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.quantitySold += Number(item.qty ?? 0);
+        existing.salesRevenue += Number(item.lineTotal ?? 0);
+        existing.profit += Number(item.totalProfit ?? 0);
+        existing.commissionEarned += Number(item.commissionEarned ?? 0);
+        return;
+      }
+
+      grouped.set(key, {
+        employeeName,
+        itemName,
+        category,
+        quantitySold: Number(item.qty ?? 0),
+        salesRevenue: Number(item.lineTotal ?? 0),
+        profit: Number(item.totalProfit ?? 0),
+        commissionEarned: Number(item.commissionEarned ?? 0),
+      });
+    });
+  });
+
+  return Array.from(grouped.values()).sort((a, b) => {
+    const employeeCompare = a.employeeName.localeCompare(b.employeeName);
+    if (employeeCompare !== 0) return employeeCompare;
+
+    const categoryCompare = a.category.localeCompare(b.category);
+    if (categoryCompare !== 0) return categoryCompare;
+
+    return a.itemName.localeCompare(b.itemName);
+  });
+}
+
 export async function exportBusinessPerformanceWorkbook(params: {
   summary: WeeklyBusinessSummary;
   weeklyCommissions: WeeklyEmployeeCommission[];
@@ -116,6 +170,7 @@ export async function exportBusinessPerformanceWorkbook(params: {
   weekOrders: SavedOrder[];
 }) {
   const { summary, weeklyCommissions, weekMaterials, weekOrders } = params;
+  const itemBreakdown = buildWeeklyEmployeeItemBreakdown(weekOrders);
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Gunstore 60";
@@ -306,6 +361,42 @@ export async function exportBusinessPerformanceWorkbook(params: {
   });
 
   autoFitColumns(salesSheet, 14, 24);
+
+  const itemBreakdownSheet = workbook.addWorksheet("Item Breakdown", {
+    views: [{ state: "frozen", ySplit: 2 }],
+  });
+
+  itemBreakdownSheet.addRow(["Weekly Item Breakdown"]);
+  styleTitleRow(itemBreakdownSheet.getRow(1));
+
+  itemBreakdownSheet.addRow([
+    "Employee",
+    "Item",
+    "Category",
+    "Quantity Sold",
+    "Sales Revenue",
+    "Profit",
+    "Commission Earned",
+  ]);
+  styleHeaderRow(itemBreakdownSheet.getRow(2));
+
+  itemBreakdown.forEach((row) => {
+    const added = itemBreakdownSheet.addRow([
+      row.employeeName,
+      row.itemName,
+      row.category,
+      row.quantitySold,
+      row.salesRevenue,
+      row.profit,
+      row.commissionEarned,
+    ]);
+    styleBodyRow(added);
+    moneyFormat(added.getCell(5));
+    moneyFormat(added.getCell(6));
+    moneyFormat(added.getCell(7));
+  });
+
+  autoFitColumns(itemBreakdownSheet, 14, 28);
 
   const buffer = await workbook.xlsx.writeBuffer();
   downloadBuffer(buffer as ArrayBuffer, `gunstore-business-performance-${summary.weekLabel.replace(/[\/\s]/g, "-")}.xlsx`);

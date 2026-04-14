@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  getStoredMaterialPurchases,
+  deleteMaterialPurchaseInSupabase,
+  getMaterialPurchasesFromSupabase,
   MaterialPurchase,
   MaterialType,
   ReimbursementStatus,
   materialOptions,
-  saveStoredMaterialPurchases,
+  upsertMaterialPurchaseInSupabase,
 } from "@/lib/gunstore/materials";
 import { getWeekRange, isWithinWeek } from "@/lib/gunstore/week";
 
@@ -20,7 +21,21 @@ function formatMoney(value: number) {
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString();
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const hours = `${date.getHours()}`.padStart(2, "0");
+  const minutes = `${date.getMinutes()}`.padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
+function formatDisplayDate(value: string | Date) {
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function toDateTimeLocalValue(value: string) {
@@ -40,6 +55,8 @@ export default function MaterialPurchaseTab({
   const [weekAnchor, setWeekAnchor] = useState(new Date());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const [form, setForm] = useState({
     createdAt: new Date().toISOString(),
@@ -52,8 +69,24 @@ export default function MaterialPurchaseTab({
   });
 
   useEffect(() => {
-    setPurchases(getStoredMaterialPurchases());
+    void loadPurchases();
   }, []);
+
+  async function loadPurchases() {
+    setLoading(true);
+
+    try {
+      const loaded = await getMaterialPurchasesFromSupabase();
+      setPurchases(loaded);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load material purchases.";
+      setSaveMessage(message);
+      setTimeout(() => setSaveMessage(""), 2500);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const weekRange = useMemo(() => getWeekRange(weekAnchor), [weekAnchor]);
 
@@ -103,7 +136,7 @@ export default function MaterialPurchaseTab({
     setEditingId(null);
   }
 
-  function handleSavePurchase() {
+  async function handleSavePurchase() {
     const quantity = Number(form.quantity);
     const unitPrice = Number(form.unitPrice);
 
@@ -113,34 +146,34 @@ export default function MaterialPurchaseTab({
       return;
     }
 
-    const purchase: MaterialPurchase = {
-      id: editingId ?? crypto.randomUUID(),
-      createdAt: new Date(form.createdAt).toISOString(),
-      material: form.material,
-      quantity,
-      unitPrice,
-      totalCost: quantity * unitPrice,
-      purchasedBy: form.purchasedBy.trim(),
-      reimbursementStatus: form.reimbursementStatus,
-      notes: form.notes.trim(),
-    };
+    setSaving(true);
 
-    let updated: MaterialPurchase[];
+    try {
+      await upsertMaterialPurchaseInSupabase({
+        id: editingId ?? undefined,
+        createdAt: new Date(form.createdAt).toISOString(),
+        material: form.material,
+        quantity,
+        unitPrice,
+        totalCost: quantity * unitPrice,
+        purchasedBy: form.purchasedBy.trim(),
+        reimbursementStatus: form.reimbursementStatus,
+        notes: form.notes.trim(),
+      });
 
-    if (editingId) {
-      updated = purchases.map((item) =>
-        item.id === editingId ? purchase : item
-      );
-      setSaveMessage("Material purchase updated.");
-    } else {
-      updated = [purchase, ...purchases];
-      setSaveMessage("Material purchase logged.");
+      await loadPurchases();
+
+      setSaveMessage(editingId ? "Material purchase updated." : "Material purchase logged.");
+      resetForm();
+      setTimeout(() => setSaveMessage(""), 2200);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to save material purchase.";
+      setSaveMessage(message);
+      setTimeout(() => setSaveMessage(""), 2500);
+    } finally {
+      setSaving(false);
     }
-
-    setPurchases(updated);
-    saveStoredMaterialPurchases(updated);
-    resetForm();
-    setTimeout(() => setSaveMessage(""), 2200);
   }
 
   function handleEditPurchase(purchase: MaterialPurchase) {
@@ -156,33 +189,46 @@ export default function MaterialPurchaseTab({
     });
   }
 
-  function handleDeletePurchase(id: string) {
+  async function handleDeletePurchase(id: string) {
     const confirmed = window.confirm(
       "Are you sure you want to delete this material purchase log?"
     );
 
     if (!confirmed) return;
 
-    const updated = purchases.filter((item) => item.id !== id);
-    setPurchases(updated);
-    saveStoredMaterialPurchases(updated);
+    setSaving(true);
 
-    if (editingId === id) {
-      resetForm();
+    try {
+      await deleteMaterialPurchaseInSupabase(id);
+      await loadPurchases();
+
+      if (editingId === id) {
+        resetForm();
+      }
+
+      setSaveMessage("Material purchase deleted.");
+      setTimeout(() => setSaveMessage(""), 2200);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to delete material purchase.";
+      setSaveMessage(message);
+      setTimeout(() => setSaveMessage(""), 2500);
+    } finally {
+      setSaving(false);
     }
-
-    setSaveMessage("Material purchase deleted.");
-    setTimeout(() => setSaveMessage(""), 2200);
   }
 
   const liveTotal = Number(form.quantity || 0) * Number(form.unitPrice || 0);
 
   return (
     <div className="grid grid-cols-12 gap-3">
-      <div className="col-span-12 rounded-xl border border-white/10 bg-black/20 p-4 xl:col-span-4">
+      <div className="col-span-12 rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.02))] p-4 shadow-[0_14px_35px_rgba(0,0,0,0.16)] xl:col-span-4">
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <div className="text-sm font-semibold text-white">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
+              Entry Form
+            </div>
+            <div className="mt-1 text-sm font-semibold text-white">
               Material Purchase Form
             </div>
             <div className="text-xs text-zinc-400">
@@ -207,7 +253,7 @@ export default function MaterialPurchaseTab({
                   createdAt: new Date(e.target.value).toISOString(),
                 }))
               }
-              className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
             />
           </div>
 
@@ -221,7 +267,7 @@ export default function MaterialPurchaseTab({
                   material: e.target.value as MaterialType,
                 }))
               }
-              className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
             >
               {materialOptions.map((material) => (
                 <option key={material} value={material}>
@@ -239,12 +285,12 @@ export default function MaterialPurchaseTab({
                 min="1"
                 value={form.quantity}
                 onChange={(e) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    quantity: Number(e.target.value),
-                  }))
-                }
-                className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                setForm((prev) => ({
+                  ...prev,
+                  quantity: Number(e.target.value),
+                }))
+              }
+                className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
               />
             </div>
 
@@ -257,12 +303,12 @@ export default function MaterialPurchaseTab({
                 min="0"
                 value={form.unitPrice}
                 onChange={(e) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    unitPrice: Number(e.target.value),
-                  }))
-                }
-                className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+                setForm((prev) => ({
+                  ...prev,
+                  unitPrice: Number(e.target.value),
+                }))
+              }
+                className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
               />
             </div>
           </div>
@@ -278,7 +324,7 @@ export default function MaterialPurchaseTab({
                 }))
               }
               placeholder="Employee name"
-              className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-500"
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-500"
             />
           </div>
 
@@ -292,7 +338,7 @@ export default function MaterialPurchaseTab({
                   reimbursementStatus: e.target.value as ReimbursementStatus,
                 }))
               }
-              className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
             >
               <option value="Unpaid">Unpaid</option>
               <option value="Paid">Paid</option>
@@ -310,11 +356,11 @@ export default function MaterialPurchaseTab({
                   notes: e.target.value,
                 }))
               }
-              className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
             />
           </div>
 
-          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="rounded-[18px] border border-white/8 bg-black/20 p-3">
             <div className="flex items-center justify-between text-sm">
               <span className="text-zinc-400">Live Total</span>
               <span className="font-semibold text-white">
@@ -326,14 +372,15 @@ export default function MaterialPurchaseTab({
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={handleSavePurchase}
-              className="w-full rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-500"
+              disabled={saving}
+              className="w-full rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(220,38,38,0.2)] hover:bg-red-500 disabled:opacity-60"
             >
-              {editingId ? "Save Changes" : "Log Purchase"}
+              {saving ? "Saving..." : editingId ? "Save Changes" : "Log Purchase"}
             </button>
 
             <button
               onClick={resetForm}
-              className="w-full rounded-lg border border-white/10 bg-black/20 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10"
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10"
             >
               Clear Form
             </button>
@@ -341,10 +388,13 @@ export default function MaterialPurchaseTab({
         </div>
       </div>
 
-      <div className="col-span-12 rounded-xl border border-white/10 bg-black/20 p-4 xl:col-span-8">
+      <div className="col-span-12 rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.02))] p-4 shadow-[0_14px_35px_rgba(0,0,0,0.16)] xl:col-span-8">
         <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <div className="text-sm font-semibold text-white">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
+              Weekly Tracking
+            </div>
+            <div className="mt-1 text-sm font-semibold text-white">
               Weekly Material Purchases
             </div>
             <div className="text-xs text-zinc-400">
@@ -361,8 +411,7 @@ export default function MaterialPurchaseTab({
             </button>
 
             <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-1.5 text-xs text-zinc-300">
-              {weekRange.start.toLocaleDateString()} -{" "}
-              {weekRange.end.toLocaleDateString()}
+              {formatDisplayDate(weekRange.start)} - {formatDisplayDate(weekRange.end)}
             </div>
 
             <button
@@ -375,28 +424,28 @@ export default function MaterialPurchaseTab({
         </div>
 
         <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-4">
-          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="rounded-[18px] border border-white/8 bg-black/20 p-3">
             <div className="text-xs text-zinc-400">Weekly Purchase Total</div>
             <div className="mt-1 text-xl font-bold text-white">
               {formatMoney(weeklyTotal)}
             </div>
           </div>
 
-          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="rounded-[18px] border border-white/8 bg-black/20 p-3">
             <div className="text-xs text-zinc-400">Entries This Week</div>
             <div className="mt-1 text-xl font-bold text-white">
               {weekPurchases.length}
             </div>
           </div>
 
-          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="rounded-[18px] border border-white/8 bg-black/20 p-3">
             <div className="text-xs text-zinc-400">Paid Back</div>
             <div className="mt-1 text-xl font-bold text-green-300">
               {formatMoney(paidTotal)}
             </div>
           </div>
 
-          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="rounded-[18px] border border-white/8 bg-black/20 p-3">
             <div className="text-xs text-zinc-400">Still Owed</div>
             <div className="mt-1 text-xl font-bold text-yellow-300">
               {formatMoney(unpaidTotal)}
@@ -404,84 +453,90 @@ export default function MaterialPurchaseTab({
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="text-zinc-400">
-              <tr className="border-b border-white/10">
-                <th className="pb-2 font-medium">Date</th>
-                <th className="pb-2 font-medium">Material</th>
-                <th className="pb-2 font-medium">Qty</th>
-                <th className="pb-2 font-medium">Unit Price</th>
-                <th className="pb-2 font-medium">Total</th>
-                <th className="pb-2 font-medium">Purchased By</th>
-                <th className="pb-2 font-medium">Reimbursed</th>
-                <th className="pb-2 font-medium">Notes</th>
-                <th className="pb-2 font-medium">Actions</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {weekPurchases.map((purchase) => (
-                <tr
-                  key={purchase.id}
-                  className="border-b border-white/5 transition hover:bg-white/5"
-                >
-                  <td className="py-3 text-white">
-                    {formatDateTime(purchase.createdAt)}
-                  </td>
-                  <td className="py-3 text-white">{purchase.material}</td>
-                  <td className="py-3 text-white">{purchase.quantity}</td>
-                  <td className="py-3 text-white">
-                    {formatMoney(purchase.unitPrice)}
-                  </td>
-                  <td className="py-3 text-white">
-                    {formatMoney(purchase.totalCost)}
-                  </td>
-                  <td className="py-3 text-zinc-300">
-                    {purchase.purchasedBy?.trim() ? purchase.purchasedBy : "-"}
-                  </td>
-                  <td className="py-3">
-                    <span
-                      className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                        purchase.reimbursementStatus === "Paid"
-                          ? "bg-green-500/15 text-green-300 border border-green-400/20"
-                          : "bg-yellow-500/15 text-yellow-300 border border-yellow-400/20"
-                      }`}
-                    >
-                      {purchase.reimbursementStatus}
-                    </span>
-                  </td>
-                  <td className="py-3 text-zinc-300">
-                    {purchase.notes?.trim() ? purchase.notes : "-"}
-                  </td>
-                  <td className="py-3">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleEditPurchase(purchase)}
-                        className="rounded-md border border-white/10 bg-black/20 px-2.5 py-1 text-xs text-white hover:bg-white/10"
-                      >
-                        Edit
-                      </button>
-
-                      <button
-                        onClick={() => handleDeletePurchase(purchase.id)}
-                        className="rounded-md border border-red-400/20 bg-red-500/10 px-2.5 py-1 text-xs text-red-300 hover:bg-red-500/20"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
+        {loading ? (
+          <div className="rounded-[18px] border border-white/8 bg-black/20 p-4 text-sm text-zinc-400">
+            Loading material purchases...
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="text-zinc-400">
+                <tr className="border-b border-white/10">
+                  <th className="pb-2 font-medium">Date</th>
+                  <th className="pb-2 font-medium">Material</th>
+                  <th className="pb-2 font-medium">Qty</th>
+                  <th className="pb-2 font-medium">Unit Price</th>
+                  <th className="pb-2 font-medium">Total</th>
+                  <th className="pb-2 font-medium">Purchased By</th>
+                  <th className="pb-2 font-medium">Reimbursed</th>
+                  <th className="pb-2 font-medium">Notes</th>
+                  <th className="pb-2 font-medium">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
 
-          {weekPurchases.length === 0 && (
-            <div className="py-8 text-center text-sm text-zinc-400">
-              No material purchases found for this week.
-            </div>
-          )}
-        </div>
+              <tbody>
+                {weekPurchases.map((purchase) => (
+                  <tr
+                    key={purchase.id}
+                    className="border-b border-white/5 transition hover:bg-white/5"
+                  >
+                    <td className="py-3 text-white">
+                      {formatDateTime(purchase.createdAt)}
+                    </td>
+                    <td className="py-3 text-white">{purchase.material}</td>
+                    <td className="py-3 text-white">{purchase.quantity}</td>
+                    <td className="py-3 text-white">
+                      {formatMoney(purchase.unitPrice)}
+                    </td>
+                    <td className="py-3 text-white">
+                      {formatMoney(purchase.totalCost)}
+                    </td>
+                    <td className="py-3 text-zinc-300">
+                      {purchase.purchasedBy?.trim() ? purchase.purchasedBy : "-"}
+                    </td>
+                    <td className="py-3">
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                          purchase.reimbursementStatus === "Paid"
+                            ? "bg-green-500/15 text-green-300 border border-green-400/20"
+                            : "bg-yellow-500/15 text-yellow-300 border border-yellow-400/20"
+                        }`}
+                      >
+                        {purchase.reimbursementStatus}
+                      </span>
+                    </td>
+                    <td className="py-3 text-zinc-300">
+                      {purchase.notes?.trim() ? purchase.notes : "-"}
+                    </td>
+                    <td className="py-3">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleEditPurchase(purchase)}
+                          className="rounded-md border border-white/10 bg-black/20 px-2.5 py-1 text-xs text-white hover:bg-white/10"
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          onClick={() => handleDeletePurchase(purchase.id)}
+                          className="rounded-md border border-red-400/20 bg-red-500/10 px-2.5 py-1 text-xs text-red-300 hover:bg-red-500/20"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {weekPurchases.length === 0 && (
+              <div className="py-8 text-center text-sm text-zinc-400">
+                No material purchases found for this week.
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

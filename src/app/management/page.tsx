@@ -43,13 +43,19 @@ type ProductRow = {
   active: boolean;
 };
 
+type SessionUserExtras = {
+  nickname?: string | null;
+  avatar?: string | null;
+  role?: string | null;
+};
+
 const tabs: { key: ManagerTab; label: string }[] = [
+  { key: "overview", label: "Overview" },
   { key: "sales_logs", label: "Sales Logs" },
   { key: "material_purchase", label: "Material Purchase" },
   { key: "product_management", label: "Product Management" },
   { key: "commissions", label: "Commissions" },
   { key: "business_performance", label: "Business Performance" },
-  { key: "overview", label: "Overview" },
 ];
 
 function formatMoney(value: number) {
@@ -91,6 +97,12 @@ function cloneOrder(order: SavedOrder): SavedOrder {
   };
 }
 
+function getDiscountMode(order: SavedOrder) {
+  return Number(order.total ?? 0) < Number(order.subtotal ?? 0)
+    ? "applied"
+    : "informational";
+}
+
 function toCatalogProduct(row: ProductRow): CatalogProduct {
   return {
     id: row.id,
@@ -107,7 +119,7 @@ function toCatalogProduct(row: ProductRow): CatalogProduct {
 export default function ManagementPage() {
   const { data: session } = useSession();
 
-  const [activeTab, setActiveTab] = useState<ManagerTab>("sales_logs");
+  const [activeTab, setActiveTab] = useState<ManagerTab>("overview");
   const [orders, setOrders] = useState<SavedOrder[]>([]);
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
   const [weekAnchor, setWeekAnchor] = useState(new Date());
@@ -199,7 +211,11 @@ export default function ManagementPage() {
       [key]: value,
     };
 
-    setDraftOrder(recalcOrder(updated, catalogProducts));
+    setDraftOrder(
+      recalcOrder(updated, catalogProducts, {
+        discountMode: key === "discount" ? "applied" : getDiscountMode(draftOrder),
+      })
+    );
   }
 
   function updateDraftItem(
@@ -234,7 +250,10 @@ export default function ManagementPage() {
           ...draftOrder,
           items,
         },
-        catalogProducts
+        catalogProducts,
+        {
+          discountMode: getDiscountMode(draftOrder),
+        }
       )
     );
   }
@@ -259,7 +278,10 @@ export default function ManagementPage() {
           ...draftOrder,
           items,
         },
-        catalogProducts
+        catalogProducts,
+        {
+          discountMode: getDiscountMode(draftOrder),
+        }
       )
     );
   }
@@ -275,7 +297,10 @@ export default function ManagementPage() {
           ...draftOrder,
           items,
         },
-        catalogProducts
+        catalogProducts,
+        {
+          discountMode: getDiscountMode(draftOrder),
+        }
       )
     );
   }
@@ -292,7 +317,10 @@ export default function ManagementPage() {
           createdAt: new Date(draftOrder.createdAt).toISOString(),
           status: draftOrder.status ?? "Edited",
         },
-        catalogProducts
+        catalogProducts,
+        {
+          discountMode: getDiscountMode(draftOrder),
+        }
       );
 
       await updateOrderInSupabase(finalOrder);
@@ -345,27 +373,34 @@ export default function ManagementPage() {
   }
 
   const displayName =
-    (session?.user as any)?.nickname || session?.user?.name || "Manager";
+    (session?.user as SessionUserExtras | undefined)?.nickname ||
+    session?.user?.name ||
+    "Manager";
 
   const avatar =
-    (session?.user as any)?.avatar || session?.user?.image || null;
+    (session?.user as SessionUserExtras | undefined)?.avatar ||
+    session?.user?.image ||
+    null;
 
   const rankLabel =
-    (session?.user as any)?.role === "management"
+    (session?.user as SessionUserExtras | undefined)?.role === "management"
       ? "Management"
-      : (session?.user as any)?.role === "employee"
+      : (session?.user as SessionUserExtras | undefined)?.role === "employee"
       ? "Employee"
       : "Unauthorized";
 
   function renderSalesLogs() {
     return (
       <div className="grid grid-cols-12 gap-3">
-        <div className="col-span-12 rounded-xl border border-white/10 bg-black/20 p-4 xl:col-span-7">
+        <div className="col-span-12 rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.02))] p-4 shadow-[0_14px_35px_rgba(0,0,0,0.16)] xl:col-span-7">
           <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <div className="text-sm font-semibold text-white">Weekly Sales Logs</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
+                Weekly Activity
+              </div>
+              <div className="mt-1 text-sm font-semibold text-white">Weekly Sales Logs</div>
               <div className="text-xs text-zinc-400">
-                Monday 12:01 AM to Sunday 11:59 PM
+                Monday 12:00 AM to Sunday 11:59 PM
               </div>
             </div>
 
@@ -390,12 +425,12 @@ export default function ManagementPage() {
             </div>
           </div>
 
-          <div className="mb-4 rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          <div className="mb-4 rounded-[18px] border border-amber-300/15 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
             Do not delete any sales from the sales log table unless absolutely necessary. Use edits and notes to correct records when possible.
           </div>
 
           {loadingOrders ? (
-            <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-zinc-400">
+            <div className="rounded-[18px] border border-white/8 bg-black/20 p-4 text-sm text-zinc-400">
               Loading sales logs...
             </div>
           ) : (
@@ -417,7 +452,7 @@ export default function ManagementPage() {
                       key={row.id}
                       onClick={() => setSelectedOrderId(row.id)}
                       className={`cursor-pointer border-b border-white/5 transition hover:bg-white/5 ${
-                        selectedOrderId === row.id ? "bg-white/5" : ""
+                        selectedOrderId === row.id ? "bg-white/[0.05]" : ""
                       }`}
                     >
                       <td className="py-3 text-white">{formatDisplayDateTime(row.createdAt)}</td>
@@ -440,10 +475,13 @@ export default function ManagementPage() {
           )}
         </div>
 
-        <div className="col-span-12 rounded-xl border border-white/10 bg-black/20 p-4 xl:col-span-5">
+        <div className="col-span-12 rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.02))] p-4 shadow-[0_14px_35px_rgba(0,0,0,0.16)] xl:col-span-5">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <div className="text-sm font-semibold text-white">Sales Log Details</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
+                Record Editor
+              </div>
+              <div className="mt-1 text-sm font-semibold text-white">Sales Log Details</div>
               <div className="text-xs text-zinc-400">
                 Select a log row to review and edit.
               </div>
@@ -455,7 +493,7 @@ export default function ManagementPage() {
           </div>
 
           {!draftOrder ? (
-            <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-zinc-400">
+            <div className="rounded-[18px] border border-white/8 bg-black/20 p-4 text-sm text-zinc-400">
               No log selected yet.
             </div>
           ) : (
@@ -685,9 +723,9 @@ export default function ManagementPage() {
 
   return (
     <main className="min-h-screen text-white">
-      <div className="px-6 py-3">
-        <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-[1480px] flex-col gap-2.5">
-          <div className="flex items-center justify-between rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 backdrop-blur-xl">
+      <div className="px-5 py-4 md:px-6">
+        <div className="mx-auto flex min-h-[calc(100vh-32px)] max-w-[1500px] flex-col gap-3">
+          <div className="flex items-center justify-between rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))] px-4 py-3 shadow-[0_18px_45px_rgba(0,0,0,0.22)] backdrop-blur-2xl">
             <div className="flex items-center gap-2.5">
               {avatar ? (
                 <img
@@ -696,13 +734,13 @@ export default function ManagementPage() {
                   className="h-10 w-10 rounded-full border border-white/10 object-cover"
                 />
               ) : (
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-600 font-semibold text-white">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-600/90 font-semibold text-white shadow-[0_10px_20px_rgba(220,38,38,0.28)]">
                   {displayName.charAt(0)}
                 </div>
               )}
 
               <div>
-                <div className="text-sm font-semibold text-white">
+                <div className="text-sm font-semibold tracking-tight text-white">
                   {displayName}
                 </div>
                 <div className="text-[11px] text-zinc-400">{rankLabel}</div>
@@ -710,51 +748,66 @@ export default function ManagementPage() {
             </div>
 
             <div className="flex items-center gap-2.5">
-              <div className="hidden text-[11px] text-zinc-400 md:block">
-                Gunstore 60 System
+              <div className="hidden rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-medium text-zinc-300 md:block">
+                Ammunation 60 Management
               </div>
 
               <button
                 onClick={() => signOut({ callbackUrl: "/" })}
-                className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-red-500"
+                className="rounded-xl bg-red-600 px-3.5 py-2 text-xs font-semibold text-white shadow-[0_12px_24px_rgba(220,38,38,0.22)] transition hover:bg-red-500"
               >
                 Logout
               </button>
             </div>
           </div>
 
-          <div className="grid min-h-0 flex-1 grid-cols-12 gap-2.5">
-            <aside className="col-span-12 flex h-full flex-col rounded-xl border border-white/10 bg-black/20 p-2.5 backdrop-blur-xl xl:col-span-2">
-              <div className="mb-2.5 rounded-lg border border-white/10 bg-black/20 p-2.5">
-                <h1 className="text-base font-bold">Management</h1>
-                <p className="mt-0.5 text-[11px] text-zinc-400">Control center</p>
+          <div className="grid min-h-0 flex-1 grid-cols-12 gap-3">
+            <aside className="col-span-12 flex h-full flex-col rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.02))] p-3 shadow-[0_16px_40px_rgba(0,0,0,0.18)] backdrop-blur-2xl xl:col-span-2">
+              <div className="mb-3 rounded-[20px] border border-white/8 bg-black/20 p-3.5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-red-200">
+                  Management
+                </div>
+                <h1 className="mt-2 text-lg font-bold tracking-tight text-white">
+                  Control Center
+                </h1>
+                <p className="mt-1 text-[11px] leading-5 text-zinc-400">
+                  Oversight for sales activity, pricing, commissions, materials, and weekly reporting.
+                </p>
               </div>
 
-              <div className="flex-1 space-y-1.5 overflow-y-auto">
+              <div className="flex-1 space-y-2 overflow-y-auto">
                 {tabs.map((tab) => (
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}
-                    className={`w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium transition ${
+                    className={`w-full rounded-[18px] border px-3.5 py-3 text-left text-sm font-medium transition ${
                       activeTab === tab.key
-                        ? "bg-red-600 text-white"
-                        : "bg-black/20 text-zinc-200 hover:bg-white/10"
+                        ? "border-red-400/20 bg-red-500/[0.08] text-white shadow-[inset_3px_0_0_0_rgba(248,113,113,0.9)]"
+                        : "border-transparent bg-black/20 text-zinc-200 hover:border-white/8 hover:bg-white/[0.05]"
                     }`}
                   >
-                    {tab.label}
+                    <div className="flex items-center justify-between gap-3">
+                      <span>{tab.label}</span>
+                      {activeTab === tab.key && (
+                        <span className="h-2 w-2 rounded-full bg-red-300 shadow-[0_0_14px_rgba(252,165,165,0.7)]" />
+                      )}
+                    </div>
                   </button>
                 ))}
               </div>
             </aside>
 
-            <section className="col-span-12 flex h-full min-h-0 flex-col rounded-xl border border-white/10 bg-black/20 p-2.5 backdrop-blur-xl xl:col-span-10">
-              <div className="mb-2.5 rounded-lg border border-white/10 bg-black/20 px-3 py-2">
-                <div className="text-sm font-semibold text-white">
+            <section className="col-span-12 flex h-full min-h-0 flex-col rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-3 shadow-[0_16px_40px_rgba(0,0,0,0.18)] backdrop-blur-2xl xl:col-span-10">
+              <div className="mb-3 rounded-[20px] border border-white/8 bg-black/20 px-4 py-3">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
+                  Active View
+                </div>
+                <div className="mt-1 text-base font-semibold tracking-tight text-white">
                   {tabs.find((tab) => tab.key === activeTab)?.label}
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1.5">
                 {activeTabContent}
               </div>
             </section>

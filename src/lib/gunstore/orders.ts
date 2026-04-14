@@ -37,6 +37,7 @@ type DbOrderItemRow = {
 
 function toSavedOrderItem(row: DbOrderItemRow): SavedOrderItem {
   return {
+    productId: row.product_id,
     name: row.product_name,
     category: row.category,
     qty: Number(row.qty ?? 0),
@@ -52,7 +53,7 @@ function toSavedOrderItem(row: DbOrderItemRow): SavedOrderItem {
 
 function toSavedOrder(row: DbOrderRow, items: SavedOrderItem[]): SavedOrder {
   const totalCommission = items.reduce(
-    (sum, item) => sum + Number((item as any).commissionEarned ?? 0),
+    (sum, item) => sum + Number(item.commissionEarned ?? 0),
     0
   );
 
@@ -212,7 +213,7 @@ export async function updateOrderInSupabase(order: SavedOrder) {
       subtotal: Number(order.subtotal ?? 0),
       discount: Number(order.discount ?? 0),
       total: Number(order.total ?? 0),
-      total_profit: Number((order as any).totalProfit ?? 0),
+      total_profit: Number(order.totalProfit ?? 0),
       status: order.status ?? "Completed",
       notes: order.notes ?? "",
     })
@@ -233,17 +234,17 @@ export async function updateOrderInSupabase(order: SavedOrder) {
 
   const itemPayload = order.items.map((item) => ({
     order_id: order.id,
-    product_id: null,
+    product_id: item.productId ?? null,
     product_name: item.name,
     category: item.category,
     qty: Number(item.qty ?? 0),
     unit_price: Number(item.unitPrice ?? 0),
     line_total: Number(item.lineTotal ?? 0),
-    unit_cost: Number((item as any).unitCost ?? 0),
-    unit_profit: Number((item as any).unitProfit ?? 0),
-    total_profit: Number((item as any).totalProfit ?? 0),
-    commission_percent: Number((item as any).commissionPercent ?? 0),
-    commission_earned: Number((item as any).commissionEarned ?? 0),
+    unit_cost: Number(item.unitCost ?? 0),
+    unit_profit: Number(item.unitProfit ?? 0),
+    total_profit: Number(item.totalProfit ?? 0),
+    commission_percent: Number(item.commissionPercent ?? 0),
+    commission_earned: Number(item.commissionEarned ?? 0),
   }));
 
   if (itemPayload.length > 0) {

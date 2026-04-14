@@ -1,5 +1,7 @@
 import { CatalogProduct, SavedOrder, SavedOrderItem } from "./types";
 
+type DiscountMode = "informational" | "applied";
+
 function getNumber(value: unknown, fallback = 0) {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -22,7 +24,7 @@ export function getCatalogPrice(
 
   if (!vipEnabled) {
     const ammoBulkItems = ["Pistol Ammo", "SMG Ammo", "Shotgun Ammo"];
-    if (product.category === "Ammo" && ammoBulkItems.includes(product.name) && qty >= 10) {
+    if (product.category === "Ammo" && ammoBulkItems.includes(product.name) && qty >= 20) {
       return Math.max(normalPrice - 50, 0);
     }
     return normalPrice;
@@ -51,10 +53,10 @@ function recalcItem(
   if (!product) {
     const unitPrice = getNumber(item.unitPrice);
     const lineTotal = unitPrice * qty;
-    const unitCost = getNumber((item as any).unitCost);
+    const unitCost = getNumber(item.unitCost);
     const unitProfit = unitPrice - unitCost;
     const totalProfit = unitProfit * qty;
-    const commissionPercent = getNumber((item as any).commissionPercent);
+    const commissionPercent = getNumber(item.commissionPercent);
     const commissionEarned = Math.round(totalProfit * (commissionPercent / 100));
 
     return {
@@ -75,11 +77,12 @@ function recalcItem(
   const unitCost = getNumber(product.cost);
   const unitProfit = unitPrice - unitCost;
   const totalProfit = unitProfit * qty;
-  const commissionPercent = getNumber((item as any).commissionPercent);
+  const commissionPercent = getNumber(item.commissionPercent);
   const commissionEarned = Math.round(totalProfit * (commissionPercent / 100));
 
   return {
     ...item,
+    productId: product.id ?? item.productId ?? null,
     name: product.name,
     category: product.category,
     qty,
@@ -95,28 +98,64 @@ function recalcItem(
 
 export function recalcOrder(
   order: SavedOrder,
-  products: CatalogProduct[]
+  products: CatalogProduct[],
+  options?: {
+    discountMode?: DiscountMode;
+  }
 ): SavedOrder {
   const productMap = getProductMap(products);
-  const items = (order.items ?? []).map((item) =>
+  const baseItems = (order.items ?? []).map((item) =>
     recalcItem(item, productMap, Boolean(order.vipEnabled))
   );
 
-  const subtotal = items.reduce(
+  const subtotal = baseItems.reduce(
     (sum, item) => sum + getNumber(item.lineTotal),
     0
   );
 
+  const discountMode = options?.discountMode ?? "informational";
   const discount = getNumber(order.discount);
-  const total = Math.max(subtotal - discount, 0);
+  const appliedDiscount =
+    discountMode === "applied" ? Math.min(discount, subtotal) : 0;
+  const total = Math.max(subtotal - appliedDiscount, 0);
+
+  let remainingDiscount = appliedDiscount;
+  const items = baseItems.map((item, index) => {
+    const lineTotal = getNumber(item.lineTotal);
+    const qty = Math.max(1, getNumber(item.qty, 1));
+    const unitCost = getNumber(item.unitCost);
+    const lineCost = unitCost * qty;
+
+    const itemDiscount =
+      index === baseItems.length - 1
+        ? remainingDiscount
+        : subtotal > 0
+        ? (lineTotal / subtotal) * appliedDiscount
+        : 0;
+
+    remainingDiscount = Math.max(remainingDiscount - itemDiscount, 0);
+
+    const adjustedRevenue = Math.max(lineTotal - itemDiscount, 0);
+    const totalProfit = Math.max(adjustedRevenue - lineCost, 0);
+    const unitProfit = qty > 0 ? totalProfit / qty : 0;
+    const commissionPercent = getNumber(item.commissionPercent);
+    const commissionEarned = Math.round(totalProfit * (commissionPercent / 100));
+
+    return {
+      ...item,
+      unitProfit,
+      totalProfit,
+      commissionEarned,
+    };
+  });
 
   const totalProfit = items.reduce(
-    (sum, item) => sum + getNumber((item as any).totalProfit),
+    (sum, item) => sum + getNumber(item.totalProfit),
     0
   );
 
   const totalCommission = items.reduce(
-    (sum, item) => sum + getNumber((item as any).commissionEarned),
+    (sum, item) => sum + getNumber(item.commissionEarned),
     0
   );
 

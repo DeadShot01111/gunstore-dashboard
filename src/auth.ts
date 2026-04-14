@@ -5,6 +5,15 @@ const DISCORD_GUILD_ID = "1483628699541700740";
 const EMPLOYEE_ROLE_ID = "1492627316298223727";
 const MANAGEMENT_ROLE_ID = "1492211620909420721";
 
+type SessionUserWithDiscord = {
+  role?: string;
+  roles?: string[];
+  nickname?: string | null;
+  avatar?: string | null;
+  username?: string | null;
+  discordId?: string | null;
+};
+
 function getRolesFromDiscordRoles(roleIds: string[]) {
   const roles: string[] = [];
 
@@ -98,12 +107,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
     async session({ session, token }) {
       if (session.user) {
-        (session.user as any).role = (token.role as string) ?? "unauthorized";
-        (session.user as any).roles = (token.roles as string[]) ?? [];
-        (session.user as any).nickname = (token.nickname as string | null) ?? null;
-        (session.user as any).avatar = (token.avatar as string | null) ?? null;
-        (session.user as any).username = (token.username as string | null) ?? null;
-        (session.user as any).discordId = (token.discordId as string | null) ?? null;
+        const user = session.user as typeof session.user & SessionUserWithDiscord;
+
+        user.role = (token.role as string) ?? "unauthorized";
+        user.roles = (token.roles as string[]) ?? [];
+        user.nickname = (token.nickname as string | null) ?? null;
+        user.avatar = (token.avatar as string | null) ?? null;
+        user.username = (token.username as string | null) ?? null;
+        user.discordId = (token.discordId as string | null) ?? null;
       }
 
       return session;

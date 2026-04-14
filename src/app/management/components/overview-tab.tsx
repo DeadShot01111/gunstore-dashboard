@@ -1,17 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getOrdersFromSupabase } from "@/lib/gunstore/orders";
 import { SavedOrder } from "@/lib/gunstore/types";
-import { getWeekRange, isWithinWeek } from "@/lib/gunstore/week";
 import {
-  getStoredMaterialPurchases,
+  getMaterialPurchasesFromSupabase,
   MaterialPurchase,
 } from "@/lib/gunstore/materials";
 import {
   CommissionPayoutRecord,
+  CommissionRateRecord,
   getCommissionPayoutsFromSupabase,
+  getCommissionRatesFromSupabase,
+  getPersonOverridesFromSupabase,
+  PersonOverrideRecord,
 } from "@/lib/gunstore/commissions";
+import {
+  buildWeeklyBusinessSummary,
+  buildWeeklyCommissionRows,
+  getWeekMaterials,
+  getWeekOrders,
+} from "@/lib/gunstore/reporting";
+import { supabase } from "@/lib/supabase/client";
 
 type ManagerTab =
   | "overview"
@@ -29,163 +39,119 @@ function formatMoney(value: number) {
   return `$${value.toLocaleString()}`;
 }
 
-function formatDisplayDate(value: string | Date) {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function getWeekStartKey(anchor: Date) {
-  const { start } = getWeekRange(anchor);
-  return start.toISOString();
-}
-
 export default function OverviewTab({ onNavigate }: OverviewTabProps) {
   const [orders, setOrders] = useState<SavedOrder[]>([]);
   const [materials, setMaterials] = useState<MaterialPurchase[]>([]);
   const [commissionPayouts, setCommissionPayouts] = useState<CommissionPayoutRecord[]>([]);
+  const [commissionRates, setCommissionRates] = useState<CommissionRateRecord[]>([]);
+  const [personOverrides, setPersonOverrides] = useState<PersonOverrideRecord[]>([]);
   const [weekAnchor] = useState(new Date());
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    void loadOverviewData();
-  }, []);
-
-  async function loadOverviewData() {
+  const loadOverviewData = useCallback(async () => {
     setLoading(true);
 
     try {
-      const [loadedOrders, loadedPayouts] = await Promise.all([
-        getOrdersFromSupabase(),
-        getCommissionPayoutsFromSupabase(),
-      ]);
+      const [
+        loadedOrders,
+        loadedPayouts,
+        loadedRates,
+        loadedMaterials,
+        loadedPersonOverrides,
+      ] =
+        await Promise.all([
+          getOrdersFromSupabase(),
+          getCommissionPayoutsFromSupabase(),
+          getCommissionRatesFromSupabase(),
+          getMaterialPurchasesFromSupabase(),
+          getPersonOverridesFromSupabase(),
+        ]);
 
       setOrders(loadedOrders);
       setCommissionPayouts(loadedPayouts);
-      setMaterials(getStoredMaterialPurchases());
+      setCommissionRates(loadedRates);
+      setMaterials(loadedMaterials);
+      setPersonOverrides(loadedPersonOverrides);
     } catch (error) {
       console.error("Failed to load overview data:", error);
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  const weekRange = useMemo(() => getWeekRange(weekAnchor), [weekAnchor]);
-  const weekStartKey = useMemo(() => getWeekStartKey(weekAnchor), [weekAnchor]);
+  useEffect(() => {
+    void loadOverviewData();
+  }, [loadOverviewData]);
 
-  const weekOrders = useMemo(() => {
-    return orders.filter((order) => isWithinWeek(order.createdAt, weekAnchor));
-  }, [orders, weekAnchor]);
+  useEffect(() => {
+    const channel = supabase
+      .channel("overview-dashboard-updates")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders" },
+        () => void loadOverviewData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "order_items" },
+        () => void loadOverviewData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "material_purchases" },
+        () => void loadOverviewData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "commission_payouts" },
+        () => void loadOverviewData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "commission_rates" },
+        () => void loadOverviewData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "commission_person_overrides" },
+        () => void loadOverviewData()
+      )
+      .subscribe();
 
-  const weekMaterials = useMemo(() => {
-    return materials.filter((purchase) => isWithinWeek(purchase.createdAt, weekAnchor));
-  }, [materials, weekAnchor]);
-
-  const weeklyCommissions = useMemo(() => {
-    const grouped = new Map<
-      string,
-      {
-        salesTotal: number;
-        totalProfit: number;
-        totalCommission: number;
-      }
-    >();
-
-    for (const order of weekOrders) {
-      const current = grouped.get(order.employeeName) ?? {
-        salesTotal: 0,
-        totalProfit: 0,
-        totalCommission: 0,
-      };
-
-      const computedCommission = Array.isArray(order.items)
-        ? order.items.reduce(
-            (sum, item) => sum + Number((item as any).commissionEarned ?? 0),
-            0
-          )
-        : Number((order as any).totalCommission ?? 0);
-
-      grouped.set(order.employeeName, {
-        salesTotal: current.salesTotal + Number(order.total ?? 0),
-        totalProfit: current.totalProfit + Number((order as any).totalProfit ?? 0),
-        totalCommission: current.totalCommission + computedCommission,
-      });
-    }
-
-    return Array.from(grouped.entries())
-      .map(([employeeName, values]) => {
-        const saved = commissionPayouts.find(
-          (payout) =>
-            payout.employeeName === employeeName &&
-            payout.weekStart === weekStartKey
-        );
-
-        return {
-          employeeName,
-          salesTotal: values.salesTotal,
-          totalProfit: values.totalProfit,
-          totalCommission: values.totalCommission,
-          status: saved?.status ?? "Unpaid",
-        };
-      })
-      .sort((a, b) => b.totalCommission - a.totalCommission);
-  }, [weekOrders, commissionPayouts, weekStartKey]);
-
-  const metrics = useMemo(() => {
-    const salesRevenue = weekOrders.reduce((sum, order) => sum + Number(order.total ?? 0), 0);
-    const discounts = weekOrders.reduce((sum, order) => sum + Number(order.discount ?? 0), 0);
-    const salesCount = weekOrders.length;
-
-    const totalProfit = weekOrders.reduce(
-      (sum, order) => sum + Number((order as any).totalProfit ?? 0),
-      0
-    );
-
-    const materialExpensesTotal = weekMaterials.reduce(
-      (sum, purchase) => sum + Number(purchase.totalCost ?? 0),
-      0
-    );
-
-    const materialExpensesUnpaid = weekMaterials
-      .filter((purchase) => purchase.reimbursementStatus === "Unpaid")
-      .reduce((sum, purchase) => sum + Number(purchase.totalCost ?? 0), 0);
-
-    const commissionTotal = weeklyCommissions.reduce(
-      (sum, row) => sum + Number(row.totalCommission ?? 0),
-      0
-    );
-
-    const commissionUnpaid = weeklyCommissions
-      .filter((row) => row.status === "Unpaid")
-      .reduce((sum, row) => sum + Number(row.totalCommission ?? 0), 0);
-
-    const actualProfit =
-      salesRevenue -
-      weekMaterials
-        .filter((purchase) => purchase.reimbursementStatus === "Paid")
-        .reduce((sum, purchase) => sum + Number(purchase.totalCost ?? 0), 0) -
-      weeklyCommissions
-        .filter((row) => row.status === "Paid")
-        .reduce((sum, row) => sum + Number(row.totalCommission ?? 0), 0);
-
-    const projectedProfit =
-      salesRevenue - materialExpensesTotal - commissionTotal;
-
-    return {
-      salesRevenue,
-      discounts,
-      salesCount,
-      totalProfit,
-      materialExpensesTotal,
-      materialExpensesUnpaid,
-      commissionTotal,
-      commissionUnpaid,
-      actualProfit,
-      projectedProfit,
+    return () => {
+      void supabase.removeChannel(channel);
     };
-  }, [weekOrders, weekMaterials, weeklyCommissions]);
+  }, [loadOverviewData]);
+
+  const weekOrders = useMemo(
+    () => getWeekOrders(orders, weekAnchor),
+    [orders, weekAnchor]
+  );
+  const weekMaterials = useMemo(
+    () => getWeekMaterials(materials, weekAnchor),
+    [materials, weekAnchor]
+  );
+  const weeklyCommissions = useMemo(
+    () =>
+      buildWeeklyCommissionRows({
+        weekOrders,
+        commissionPayouts,
+        commissionRates,
+        personOverrides,
+        weekAnchor,
+      }),
+    [weekOrders, commissionPayouts, commissionRates, personOverrides, weekAnchor]
+  );
+  const metrics = useMemo(
+    () =>
+      buildWeeklyBusinessSummary({
+        weekOrders,
+        weekMaterials,
+        weeklyCommissions,
+        weekAnchor,
+      }),
+    [weekOrders, weekMaterials, weeklyCommissions, weekAnchor]
+  );
 
   const topEmployee = weeklyCommissions[0] ?? null;
 
@@ -199,9 +165,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     }
 
     if (metrics.commissionUnpaid > 0) {
-      items.push(
-        `${formatMoney(metrics.commissionUnpaid)} in unpaid commissions`
-      );
+      items.push(`${formatMoney(metrics.commissionUnpaid)} in unpaid commissions`);
     }
 
     if (weekOrders.length === 0) {
@@ -209,19 +173,22 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
     }
 
     return items;
-  }, [metrics.materialExpensesUnpaid, metrics.commissionUnpaid, weekOrders.length]);
+  }, [
+    metrics.commissionUnpaid,
+    metrics.materialExpensesUnpaid,
+    weekOrders.length,
+  ]);
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+      <div className="rounded-[22px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.02))] p-4 shadow-[0_14px_35px_rgba(0,0,0,0.16)]">
         <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <div className="text-sm font-semibold text-white">
-              Weekly Overview
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
+              Snapshot
             </div>
-            <div className="text-xs text-zinc-400">
-              {formatDisplayDate(weekRange.start)} - {formatDisplayDate(weekRange.end)}
-            </div>
+            <div className="mt-1 text-sm font-semibold text-white">Weekly Overview</div>
+            <div className="text-xs text-zinc-400">{metrics.weekLabel}</div>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -254,33 +221,38 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
       </div>
 
       {loading ? (
-        <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-sm text-zinc-400">
+        <div className="rounded-[22px] border border-white/8 bg-black/20 p-4 text-sm text-zinc-400">
           Loading overview...
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+            <div className="rounded-[22px] border border-white/8 bg-black/20 p-4">
               <div className="text-xs text-zinc-400">Sales Revenue</div>
               <div className="mt-2 text-2xl font-bold text-white">
                 {formatMoney(metrics.salesRevenue)}
               </div>
               <div className="mt-1 text-xs text-zinc-500">
-                {metrics.salesCount} sales this week
+                {weekOrders.length} sales this week
               </div>
             </div>
 
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-              <div className="text-xs text-zinc-400">Store Profit</div>
+            <div className="rounded-[22px] border border-white/8 bg-black/20 p-4">
+              <div className="text-xs text-zinc-400">Store Gross Profit</div>
               <div className="mt-2 text-2xl font-bold text-green-300">
-                {formatMoney(metrics.totalProfit)}
+                {formatMoney(
+                  weekOrders.reduce(
+                    (sum, order) => sum + Number(order.totalProfit ?? 0),
+                    0
+                  )
+                )}
               </div>
               <div className="mt-1 text-xs text-zinc-500">
-                Before expense payouts
+                Before material reimbursements and commission payouts
               </div>
             </div>
 
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+            <div className="rounded-[22px] border border-white/8 bg-black/20 p-4">
               <div className="text-xs text-zinc-400">Material Expenses</div>
               <div className="mt-2 text-2xl font-bold text-white">
                 {formatMoney(metrics.materialExpensesTotal)}
@@ -289,20 +261,10 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
                 Unpaid: {formatMoney(metrics.materialExpensesUnpaid)}
               </div>
             </div>
-
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-              <div className="text-xs text-zinc-400">Actual Profit</div>
-              <div className="mt-2 text-2xl font-bold text-green-300">
-                {formatMoney(metrics.actualProfit)}
-              </div>
-              <div className="mt-1 text-xs text-zinc-500">
-                Projected: {formatMoney(metrics.projectedProfit)}
-              </div>
-            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+            <div className="rounded-[22px] border border-white/8 bg-black/20 p-4">
               <div className="mb-3 text-sm font-semibold text-white">
                 Top Employee This Week
               </div>
@@ -331,14 +293,14 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-zinc-400">Commission</span>
                     <span className="text-white">
-                      {formatMoney(topEmployee.totalCommission)}
+                      {formatMoney(topEmployee.commissionEarned)}
                     </span>
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+            <div className="rounded-[22px] border border-white/8 bg-black/20 p-4">
               <div className="mb-3 text-sm font-semibold text-white">
                 Management Alerts
               </div>
@@ -349,9 +311,9 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {alerts.map((alert, index) => (
+                  {alerts.map((alert) => (
                     <div
-                      key={index}
+                      key={alert}
                       className="rounded-lg border border-yellow-400/20 bg-yellow-500/10 p-3 text-sm text-yellow-300"
                     >
                       {alert}
@@ -362,7 +324,7 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
             </div>
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+          <div className="rounded-[22px] border border-white/8 bg-black/20 p-4">
             <div className="mb-3 text-sm font-semibold text-white">
               Quick Weekly Snapshot
             </div>
@@ -377,6 +339,10 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
                 </thead>
                 <tbody>
                   <tr className="border-b border-white/5">
+                    <td className="py-3 text-white">Week</td>
+                    <td className="py-3 text-white">{metrics.weekLabel}</td>
+                  </tr>
+                  <tr className="border-b border-white/5">
                     <td className="py-3 text-white">Sales Revenue</td>
                     <td className="py-3 text-white">{formatMoney(metrics.salesRevenue)}</td>
                   </tr>
@@ -385,24 +351,28 @@ export default function OverviewTab({ onNavigate }: OverviewTabProps) {
                     <td className="py-3 text-green-300">{formatMoney(metrics.discounts)}</td>
                   </tr>
                   <tr className="border-b border-white/5">
-                    <td className="py-3 text-white">Store Profit</td>
-                    <td className="py-3 text-green-300">{formatMoney(metrics.totalProfit)}</td>
-                  </tr>
-                  <tr className="border-b border-white/5">
                     <td className="py-3 text-white">Total Material Expenses</td>
-                    <td className="py-3 text-white">{formatMoney(metrics.materialExpensesTotal)}</td>
+                    <td className="py-3 text-white">
+                      {formatMoney(metrics.materialExpensesTotal)}
+                    </td>
                   </tr>
                   <tr className="border-b border-white/5">
                     <td className="py-3 text-white">Total Commission Expenses</td>
-                    <td className="py-3 text-white">{formatMoney(metrics.commissionTotal)}</td>
+                    <td className="py-3 text-white">
+                      {formatMoney(metrics.commissionTotal)}
+                    </td>
                   </tr>
                   <tr className="border-b border-white/5">
                     <td className="py-3 text-white">Actual Profit</td>
-                    <td className="py-3 text-green-300">{formatMoney(metrics.actualProfit)}</td>
+                    <td className="py-3 text-green-300">
+                      {formatMoney(metrics.actualProfit)}
+                    </td>
                   </tr>
                   <tr>
                     <td className="py-3 text-white">Projected Profit</td>
-                    <td className="py-3 text-white">{formatMoney(metrics.projectedProfit)}</td>
+                    <td className="py-3 text-white">
+                      {formatMoney(metrics.projectedProfit)}
+                    </td>
                   </tr>
                 </tbody>
               </table>

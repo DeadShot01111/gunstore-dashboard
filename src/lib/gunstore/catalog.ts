@@ -131,6 +131,7 @@ const STORAGE_KEY = "gunstore_catalog";
 
 function normalizeProduct(product: Partial<CatalogProduct>): CatalogProduct {
   return {
+    id: product.id,
     name: product.name ?? "",
     category: product.category ?? "Misc Items",
     price: Number(product.price ?? 0),
@@ -147,7 +148,7 @@ function normalizeProduct(product: Partial<CatalogProduct>): CatalogProduct {
         : product.vipFixedPrice !== undefined
         ? Number(product.vipFixedPrice)
         : undefined,
-    cost: Number((product as any).cost ?? 0),
+    cost: Number(product.cost ?? 0),
   } as CatalogProduct;
 }
 

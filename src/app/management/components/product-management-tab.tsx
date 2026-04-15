@@ -86,10 +86,6 @@ export default function ProductManagementTab() {
   const [loading, setLoading] = useState(true);
   const [savingAll, setSavingAll] = useState(false);
 
-  useEffect(() => {
-    void loadProducts();
-  }, []);
-
   async function loadProducts() {
     setLoading(true);
 
@@ -109,6 +105,10 @@ export default function ProductManagementTab() {
     setProducts((data ?? []) as ProductRow[]);
     setLoading(false);
   }
+
+  useEffect(() => {
+    void loadProducts();
+  }, []);
 
   const filteredProducts = useMemo(() => {
     return products.filter((product) => {

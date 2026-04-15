@@ -10,11 +10,17 @@ import OverviewTab from "@/app/management/components/overview-tab";
 import ProductManagementTab from "@/app/management/components/product-management-tab";
 
 import {
+  createOrderInSupabase,
   deleteOrderInSupabase,
   getOrdersFromSupabase,
   updateOrderInSupabase,
 } from "@/lib/gunstore/orders";
 import { recalcOrder } from "@/lib/gunstore/pricing";
+import {
+  CommissionRateRecord,
+  getCommissionPercentForProduct,
+  getCommissionRatesFromSupabase,
+} from "@/lib/gunstore/commissions";
 import { getWeekRange, isWithinWeek } from "@/lib/gunstore/week";
 import { supabase } from "@/lib/supabase/client";
 import {
@@ -97,6 +103,28 @@ function cloneOrder(order: SavedOrder): SavedOrder {
   };
 }
 
+function createEmptyOrder(weekStart: Date): SavedOrder {
+  const createdAt = new Date(weekStart);
+  createdAt.setHours(12, 0, 0, 0);
+
+  return {
+    id: `draft-${createdAt.getTime()}`,
+    createdAt: createdAt.toISOString(),
+    employeeName: "",
+    employeeEmail: "",
+    role: "Employee",
+    vipEnabled: false,
+    items: [],
+    subtotal: 0,
+    discount: 0,
+    total: 0,
+    totalProfit: 0,
+    totalCommission: 0,
+    status: "Completed",
+    notes: "",
+  };
+}
+
 function getDiscountMode(order: SavedOrder) {
   return Number(order.total ?? 0) < Number(order.subtotal ?? 0)
     ? "applied"
@@ -122,9 +150,11 @@ export default function ManagementPage() {
   const [activeTab, setActiveTab] = useState<ManagerTab>("overview");
   const [orders, setOrders] = useState<SavedOrder[]>([]);
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
+  const [commissionRates, setCommissionRates] = useState<CommissionRateRecord[]>([]);
   const [weekAnchor, setWeekAnchor] = useState(new Date());
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [draftOrder, setDraftOrder] = useState<SavedOrder | null>(null);
+  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [savingOrder, setSavingOrder] = useState(false);
@@ -137,7 +167,7 @@ export default function ManagementPage() {
     setLoadingOrders(true);
 
     try {
-      const [loadedOrders, productsResult] = await Promise.all([
+      const [loadedOrders, productsResult, loadedRates] = await Promise.all([
         getOrdersFromSupabase(),
         supabase
           .from("products")
@@ -145,9 +175,11 @@ export default function ManagementPage() {
           .eq("active", true)
           .order("category", { ascending: true })
           .order("name", { ascending: true }),
+        getCommissionRatesFromSupabase(),
       ]);
 
       setOrders(loadedOrders);
+      setCommissionRates(loadedRates);
 
       if (!productsResult.error && Array.isArray(productsResult.data)) {
         setCatalogProducts(
@@ -175,11 +207,12 @@ export default function ManagementPage() {
 
   useEffect(() => {
     if (selectedOrder) {
+      setIsCreatingOrder(false);
       setDraftOrder(cloneOrder(selectedOrder));
-    } else {
+    } else if (!isCreatingOrder) {
       setDraftOrder(null);
     }
-  }, [selectedOrder]);
+  }, [isCreatingOrder, selectedOrder]);
 
   const weekOrders = useMemo(() => {
     return orders
@@ -229,9 +262,11 @@ export default function ManagementPage() {
       if (i !== index) return item;
 
       if (field === "name") {
+        const name = String(value);
         return {
           ...item,
-          name: String(value),
+          name,
+          commissionPercent: getCommissionPercentForProduct(name, commissionRates),
         };
       }
 
@@ -256,6 +291,18 @@ export default function ManagementPage() {
         }
       )
     );
+  }
+
+  function startNewOrder() {
+    setSelectedOrderId(null);
+    setIsCreatingOrder(true);
+    setDraftOrder(createEmptyOrder(weekRange.start));
+  }
+
+  function cancelDraftOrder() {
+    setIsCreatingOrder(false);
+    setSelectedOrderId(null);
+    setDraftOrder(null);
   }
 
   function addDraftItem() {
@@ -308,6 +355,24 @@ export default function ManagementPage() {
   async function saveDraftOrder() {
     if (!draftOrder) return;
 
+    if (!draftOrder.employeeName.trim()) {
+      setSaveMessage("Employee name is required.");
+      setTimeout(() => setSaveMessage(""), 2200);
+      return;
+    }
+
+    if (draftOrder.items.length === 0) {
+      setSaveMessage("Add at least one item before saving.");
+      setTimeout(() => setSaveMessage(""), 2200);
+      return;
+    }
+
+    if (draftOrder.items.some((item) => !item.name.trim())) {
+      setSaveMessage("Each sale item needs a selected product.");
+      setTimeout(() => setSaveMessage(""), 2200);
+      return;
+    }
+
     setSavingOrder(true);
 
     try {
@@ -322,6 +387,32 @@ export default function ManagementPage() {
           discountMode: getDiscountMode(draftOrder),
         }
       );
+
+      if (isCreatingOrder) {
+        const createdOrderId = await createOrderInSupabase({
+          employeeDiscordId: null,
+          employeeName: finalOrder.employeeName.trim(),
+          employeeEmail: finalOrder.employeeEmail?.trim() || null,
+          role: finalOrder.role ?? "Employee",
+          vipEnabled: finalOrder.vipEnabled,
+          subtotal: finalOrder.subtotal,
+          discount: finalOrder.discount,
+          total: finalOrder.total,
+          totalProfit: Number(finalOrder.totalProfit ?? 0),
+          status: finalOrder.status ?? "Completed",
+          notes: finalOrder.notes ?? "",
+          items: finalOrder.items,
+        });
+
+        const refreshedOrders = await getOrdersFromSupabase();
+        setOrders(refreshedOrders);
+        setSelectedOrderId(createdOrderId);
+        setIsCreatingOrder(false);
+
+        setSaveMessage("Sale log created.");
+        setTimeout(() => setSaveMessage(""), 2200);
+        return;
+      }
 
       await updateOrderInSupabase(finalOrder);
 
@@ -404,7 +495,14 @@ export default function ManagementPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={startNewOrder}
+                className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-500"
+              >
+                New Sale
+              </button>
+
               <button
                 onClick={() => shiftWeek("prev")}
                 className="rounded-lg border border-white/10 bg-black/20 px-3 py-1.5 text-xs text-white hover:bg-white/10"
@@ -483,7 +581,9 @@ export default function ManagementPage() {
               </div>
               <div className="mt-1 text-sm font-semibold text-white">Sales Log Details</div>
               <div className="text-xs text-zinc-400">
-                Select a log row to review and edit.
+                {isCreatingOrder
+                  ? "Create and save a missing sale."
+                  : "Select a log row to review and edit."}
               </div>
             </div>
 
@@ -674,16 +774,30 @@ export default function ManagementPage() {
                   disabled={savingOrder}
                   className="w-full rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-60"
                 >
-                  {savingOrder ? "Saving..." : "Save Changes"}
+                  {savingOrder
+                    ? "Saving..."
+                    : isCreatingOrder
+                    ? "Create Sale"
+                    : "Save Changes"}
                 </button>
 
-                <button
-                  onClick={deleteSelectedOrder}
-                  disabled={savingOrder}
-                  className="w-full rounded-lg border border-red-400/20 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-300 hover:bg-red-500/20 disabled:opacity-60"
-                >
-                  {savingOrder ? "Working..." : "Delete Sale Log"}
-                </button>
+                {isCreatingOrder ? (
+                  <button
+                    onClick={cancelDraftOrder}
+                    disabled={savingOrder}
+                    className="w-full rounded-lg border border-white/10 bg-black/20 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"
+                  >
+                    {savingOrder ? "Working..." : "Cancel"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={deleteSelectedOrder}
+                    disabled={savingOrder}
+                    className="w-full rounded-lg border border-red-400/20 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-300 hover:bg-red-500/20 disabled:opacity-60"
+                  >
+                    {savingOrder ? "Working..." : "Delete Sale Log"}
+                  </button>
+                )}
               </div>
             </div>
           )}

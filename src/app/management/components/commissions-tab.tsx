@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import {
   CommissionPayoutRecord,
@@ -15,6 +15,7 @@ import {
   upsertPersonOverrideInSupabase,
 } from "@/lib/gunstore/commissions";
 import { getOrdersFromSupabase } from "@/lib/gunstore/orders";
+import { buildWeeklyCommissionRows } from "@/lib/gunstore/reporting";
 import { SavedOrder } from "@/lib/gunstore/types";
 import { getWeekRange, isWithinWeek } from "@/lib/gunstore/week";
 
@@ -40,7 +41,15 @@ function formatMoney(value: number) {
   return `$${value.toLocaleString()}`;
 }
 
+function isDateOnlyString(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
 function formatDisplayDate(value: string | Date) {
+  if (typeof value === "string" && isDateOnlyString(value)) {
+    return value;
+  }
+
   const date = new Date(value);
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
@@ -49,6 +58,10 @@ function formatDisplayDate(value: string | Date) {
 }
 
 function toDateKey(value: string | Date) {
+  if (typeof value === "string" && isDateOnlyString(value)) {
+    return value;
+  }
+
   const date = new Date(value);
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
@@ -69,27 +82,13 @@ function normalizeRole(role?: string) {
   return "Employee";
 }
 
-function calculateCommissionForItem(params: {
-  itemProfit: number;
-  baseProductPercent: number;
-  personPercent?: number;
-}) {
-  const { itemProfit, baseProductPercent, personPercent } = params;
-
-  if (baseProductPercent <= 0) {
-    return 0;
-  }
-
-  const effectivePercent = personPercent ?? baseProductPercent;
-  return Math.round(itemProfit * (effectivePercent / 100));
-}
-
 export default function CommissionsTab() {
   const [orders, setOrders] = useState<SavedOrder[]>([]);
   const [payouts, setPayouts] = useState<CommissionPayoutRecord[]>([]);
   const [rates, setRates] = useState<CommissionRateRecord[]>([]);
   const [personOverrides, setPersonOverrides] = useState<PersonOverrideRecord[]>([]);
   const [products, setProducts] = useState<{ name: string; category: string }[]>([]);
+  const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
   const [weekAnchor, setWeekAnchor] = useState(new Date());
   const [saveMessage, setSaveMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -97,11 +96,7 @@ export default function CommissionsTab() {
   const [savingPayout, setSavingPayout] = useState(false);
   const [savingOverrides, setSavingOverrides] = useState(false);
 
-  useEffect(() => {
-    void loadCommissionData();
-  }, []);
-
-  async function loadCommissionData() {
+  const loadCommissionData = useCallback(async () => {
     setLoading(true);
 
     try {
@@ -141,7 +136,46 @@ export default function CommissionsTab() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    void loadCommissionData();
+  }, [loadCommissionData]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("commissions-dashboard-updates")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders" },
+        () => void loadCommissionData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "order_items" },
+        () => void loadCommissionData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "commission_payouts" },
+        () => void loadCommissionData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "commission_rates" },
+        () => void loadCommissionData()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "commission_person_overrides" },
+        () => void loadCommissionData()
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [loadCommissionData]);
 
   const weekRange = useMemo(() => getWeekRange(weekAnchor), [weekAnchor]);
   const weekStartKey = useMemo(() => getWeekStartKey(weekAnchor), [weekAnchor]);
@@ -151,87 +185,31 @@ export default function CommissionsTab() {
   }, [orders, weekAnchor]);
 
   const commissionRows = useMemo(() => {
-    const grouped = new Map<
-      string,
-      {
-        role: string;
-        salesCount: number;
-        salesRevenue: number;
-        totalProfit: number;
-        totalCommission: number;
-      }
-    >();
+    const roleMap = new Map<string, string>();
 
     for (const order of weekOrders) {
-      const employeeRole = normalizeRole(order.role);
-      const personOverridePercent = personOverrides.find(
-        (entry) => entry.employeeName === order.employeeName
-      )?.commissionPercent;
-
-      const current = grouped.get(order.employeeName) ?? {
-        role: employeeRole,
-        salesCount: 0,
-        salesRevenue: 0,
-        totalProfit: 0,
-        totalCommission: 0,
-      };
-
-      const orderProfit =
-        typeof (order as any).totalProfit === "number"
-          ? Number((order as any).totalProfit)
-          : Array.isArray(order.items)
-            ? order.items.reduce(
-                (sum, item) => sum + Number((item as any).totalProfit ?? 0),
-                0
-              )
-            : 0;
-
-      const orderCommission = Array.isArray(order.items)
-        ? order.items.reduce((sum, item) => {
-            const itemProfit = Number((item as any).totalProfit ?? 0);
-            const baseProductPercent = Number((item as any).commissionPercent ?? 0);
-
-            return (
-              sum +
-              calculateCommissionForItem({
-                itemProfit,
-                baseProductPercent,
-                personPercent: personOverridePercent,
-              })
-            );
-          }, 0)
-        : Number((order as any).totalCommission ?? 0);
-
-      grouped.set(order.employeeName, {
-        role: employeeRole,
-        salesCount: current.salesCount + 1,
-        salesRevenue: current.salesRevenue + Number(order.total ?? 0),
-        totalProfit: current.totalProfit + orderProfit,
-        totalCommission: current.totalCommission + orderCommission,
-      });
+      if (!roleMap.has(order.employeeName)) {
+        roleMap.set(order.employeeName, normalizeRole(order.role));
+      }
     }
 
-    return Array.from(grouped.entries())
-      .map(([employeeName, values]) => {
-        const savedPayout = payouts.find(
-          (payout) =>
-            payout.employeeName === employeeName &&
-            toDateKey(payout.weekStart) === weekStartKey
-        );
-
-        return {
-          employeeName,
-          role: values.role,
-          salesCount: values.salesCount,
-          salesRevenue: values.salesRevenue,
-          totalProfit: values.totalProfit,
-          totalCommission: values.totalCommission,
-          status: savedPayout?.status ?? "Unpaid",
-          notes: savedPayout?.notes ?? "",
-        } as EmployeeCommissionRow;
-      })
-      .sort((a, b) => b.totalCommission - a.totalCommission);
-  }, [weekOrders, payouts, weekStartKey, personOverrides]);
+    return buildWeeklyCommissionRows({
+      weekOrders,
+      commissionPayouts: payouts,
+      commissionRates: rates,
+      personOverrides,
+      weekAnchor,
+    }).map((row) => ({
+      employeeName: row.employeeName,
+      role: roleMap.get(row.employeeName) ?? "Employee",
+      salesCount: row.salesCount,
+      salesRevenue: row.salesTotal,
+      totalProfit: row.totalProfit,
+      totalCommission: row.commissionEarned,
+      status: row.status,
+      notes: row.notes,
+    }));
+  }, [weekAnchor, weekOrders, payouts, rates, personOverrides]);
 
   const totals = useMemo(() => {
     const totalRevenue = commissionRows.reduce(
@@ -336,8 +314,13 @@ export default function CommissionsTab() {
       });
 
       await refreshPayouts();
+      setDraftNotes((prev) => ({
+        ...prev,
+        [`${weekStartKey}:${employeeName}`]: nextNotes,
+      }));
       showMessage(`${employeeName} marked ${nextStatus}.`);
     } catch (error) {
+      console.error("Failed to save payout:", error);
       const message =
         error instanceof Error ? error.message : "Failed to save payout.";
       showMessage(message);
@@ -454,6 +437,11 @@ export default function CommissionsTab() {
       role: row.role,
     }));
   }, [commissionRows]);
+
+  function getDraftNote(row: EmployeeCommissionRow) {
+    const key = `${weekStartKey}:${row.employeeName}`;
+    return draftNotes[key] ?? row.notes;
+  }
 
   return (
     <div className="grid grid-cols-12 gap-3">
@@ -697,7 +685,13 @@ export default function CommissionsTab() {
                     </td>
                     <td className="py-3">
                       <input
-                        value={row.notes}
+                        value={getDraftNote(row)}
+                        onChange={(e) =>
+                          setDraftNotes((prev) => ({
+                            ...prev,
+                            [`${weekStartKey}:${row.employeeName}`]: e.target.value,
+                          }))
+                        }
                         onBlur={(e) =>
                           void upsertPayout(row.employeeName, {
                             notes: e.target.value,

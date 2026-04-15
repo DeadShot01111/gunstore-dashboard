@@ -652,7 +652,7 @@ export default function EmployeeClient({
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-zinc-400">Subtotal</span>
-                    <span className="font-medium text-white">${subtotal}</span>
+                    <span className="font-medium text-white">${rawSubtotal}</span>
                   </div>
 
                   <div className="flex justify-between">

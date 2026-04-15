@@ -146,7 +146,14 @@ export default function EmployeeClient({
     setCart((prev) =>
       prev
         .map((i) =>
-          i.name === name ? { ...i, qty: clampQty(i.qty + delta) } : i
+          i.name === name
+            ? {
+                ...i,
+                qty: clampQty(
+                  i.qty === 1 && delta > 1 ? delta : i.qty + delta
+                ),
+              }
+            : i
         )
         .filter((i) => i.qty > 0)
     );
@@ -589,13 +596,6 @@ export default function EmployeeClient({
                             >
                               -10
                             </button>
-                            <button
-                              onClick={() => changeQty(item.name, -50)}
-                              className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-1.5 text-[10px] text-white transition hover:bg-white/10"
-                            >
-                              -50
-                            </button>
-
                             <input
                               type="number"
                               min="1"
@@ -617,12 +617,6 @@ export default function EmployeeClient({
                               className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-1.5 text-[10px] text-white transition hover:bg-white/10"
                             >
                               +10
-                            </button>
-                            <button
-                              onClick={() => changeQty(item.name, 50)}
-                              className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-1.5 text-[10px] text-white transition hover:bg-white/10"
-                            >
-                              +50
                             </button>
                           </div>
                         </div>

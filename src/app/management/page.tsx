@@ -21,7 +21,14 @@ import {
   getCommissionPercentForProduct,
   getCommissionRatesFromSupabase,
 } from "@/lib/gunstore/commissions";
-import { getWeekRange, isWithinWeek } from "@/lib/gunstore/week";
+import {
+  businessLocalDateTimeToIso,
+  formatBusinessDate,
+  formatBusinessDateTime,
+  getWeekRange,
+  isWithinWeek,
+  toBusinessDateTimeLocalValue,
+} from "@/lib/gunstore/week";
 import { supabase } from "@/lib/supabase/client";
 import {
   CatalogProduct,
@@ -69,31 +76,15 @@ function formatMoney(value: number) {
 }
 
 function formatDisplayDate(value: string | Date) {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return formatBusinessDate(value);
 }
 
 function formatDisplayDateTime(value: string | Date) {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  const hours = `${date.getHours()}`.padStart(2, "0");
-  const minutes = `${date.getMinutes()}`.padStart(2, "0");
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
+  return formatBusinessDateTime(value);
 }
 
 function toDateTimeLocalValue(value: string) {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  const hours = `${date.getHours()}`.padStart(2, "0");
-  const minutes = `${date.getMinutes()}`.padStart(2, "0");
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+  return toBusinessDateTimeLocalValue(value);
 }
 
 function cloneOrder(order: SavedOrder): SavedOrder {
@@ -103,13 +94,10 @@ function cloneOrder(order: SavedOrder): SavedOrder {
   };
 }
 
-function createEmptyOrder(weekStart: Date): SavedOrder {
-  const createdAt = new Date(weekStart);
-  createdAt.setHours(12, 0, 0, 0);
-
+function createEmptyOrder(weekStart: string): SavedOrder {
   return {
-    id: `draft-${createdAt.getTime()}`,
-    createdAt: createdAt.toISOString(),
+    id: `draft-${weekStart}`,
+    createdAt: businessLocalDateTimeToIso(`${weekStart}T12:00`),
     employeeName: "",
     employeeEmail: "",
     role: "Employee",
@@ -607,7 +595,7 @@ export default function ManagementPage() {
                     onChange={(e) =>
                       updateDraftField(
                         "createdAt",
-                        new Date(e.target.value).toISOString()
+                        businessLocalDateTimeToIso(e.target.value)
                       )
                     }
                     className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
@@ -811,7 +799,7 @@ export default function ManagementPage() {
       case "sales_logs":
         return renderSalesLogs();
       case "material_purchase":
-        return <MaterialPurchaseTab managerName="Management" />;
+        return <MaterialPurchaseTab />;
       case "product_management":
         return <ProductManagementTab />;
       case "commissions":

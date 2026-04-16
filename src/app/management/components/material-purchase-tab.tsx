@@ -10,47 +10,32 @@ import {
   materialOptions,
   upsertMaterialPurchaseInSupabase,
 } from "@/lib/gunstore/materials";
-import { getWeekRange, isWithinWeek } from "@/lib/gunstore/week";
-
-type MaterialPurchaseTabProps = {
-  managerName?: string;
-};
+import {
+  businessLocalDateTimeToIso,
+  formatBusinessDate,
+  formatBusinessDateTime,
+  getWeekRange,
+  isWithinWeek,
+  toBusinessDateTimeLocalValue,
+} from "@/lib/gunstore/week";
 
 function formatMoney(value: number) {
   return `$${value.toLocaleString()}`;
 }
 
 function formatDateTime(value: string) {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  const hours = `${date.getHours()}`.padStart(2, "0");
-  const minutes = `${date.getMinutes()}`.padStart(2, "0");
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
+  return formatBusinessDateTime(value);
 }
 
 function formatDisplayDate(value: string | Date) {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return formatBusinessDate(value);
 }
 
 function toDateTimeLocalValue(value: string) {
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  const hours = `${date.getHours()}`.padStart(2, "0");
-  const minutes = `${date.getMinutes()}`.padStart(2, "0");
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+  return toBusinessDateTimeLocalValue(value);
 }
 
-export default function MaterialPurchaseTab({
-  managerName = "Management",
-}: MaterialPurchaseTabProps) {
+export default function MaterialPurchaseTab() {
   const [purchases, setPurchases] = useState<MaterialPurchase[]>([]);
   const [weekAnchor, setWeekAnchor] = useState(new Date());
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -250,7 +235,7 @@ export default function MaterialPurchaseTab({
               onChange={(e) =>
                 setForm((prev) => ({
                   ...prev,
-                  createdAt: new Date(e.target.value).toISOString(),
+                  createdAt: businessLocalDateTimeToIso(e.target.value),
                 }))
               }
               className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"

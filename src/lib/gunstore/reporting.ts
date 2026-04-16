@@ -6,7 +6,12 @@ import {
 import { MaterialPurchase } from "./materials";
 import { WeeklyBusinessSummary, WeeklyEmployeeCommission } from "./export-business-performance";
 import { SavedOrder } from "./types";
-import { getWeekRange, isWithinWeek, parseGunstoreDate } from "./week";
+import {
+  formatBusinessDate,
+  getBusinessDateKey,
+  getWeekRange,
+  isWithinWeek,
+} from "./week";
 
 export type WeeklyCommissionRow = WeeklyEmployeeCommission & {
   totalProfit: number;
@@ -14,25 +19,13 @@ export type WeeklyCommissionRow = WeeklyEmployeeCommission & {
   notes: string;
 };
 
-function toDateKey(value: string | Date) {
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return value;
-  }
-
-  const date = parseGunstoreDate(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 export function formatDisplayDate(value: string | Date) {
-  return toDateKey(value);
+  return formatBusinessDate(value);
 }
 
 export function getWeekStartKey(anchor: Date) {
   const { start } = getWeekRange(anchor);
-  return toDateKey(start);
+  return getBusinessDateKey(start);
 }
 
 export function getWeekOrders(orders: SavedOrder[], weekAnchor: Date) {
@@ -130,7 +123,7 @@ export function buildWeeklyCommissionRows(params: {
       const savedPayout = commissionPayouts.find(
         (payout) =>
           payout.employeeName === employeeName &&
-          toDateKey(payout.weekStart) === weekStartKey
+          getBusinessDateKey(payout.weekStart) === weekStartKey
       );
 
       const averageRate =

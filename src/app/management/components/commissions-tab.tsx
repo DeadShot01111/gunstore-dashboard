@@ -17,7 +17,12 @@ import {
 import { getOrdersFromSupabase } from "@/lib/gunstore/orders";
 import { buildWeeklyCommissionRows } from "@/lib/gunstore/reporting";
 import { SavedOrder } from "@/lib/gunstore/types";
-import { getWeekRange, isWithinWeek } from "@/lib/gunstore/week";
+import {
+  formatBusinessDate,
+  getBusinessDateKey,
+  getWeekRange,
+  isWithinWeek,
+} from "@/lib/gunstore/week";
 
 type ProductRow = {
   id: string;
@@ -41,32 +46,12 @@ function formatMoney(value: number) {
   return `$${value.toLocaleString()}`;
 }
 
-function isDateOnlyString(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
 function formatDisplayDate(value: string | Date) {
-  if (typeof value === "string" && isDateOnlyString(value)) {
-    return value;
-  }
-
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return formatBusinessDate(value);
 }
 
 function toDateKey(value: string | Date) {
-  if (typeof value === "string" && isDateOnlyString(value)) {
-    return value;
-  }
-
-  const date = new Date(value);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return getBusinessDateKey(value);
 }
 
 function getWeekStartKey(anchor: Date) {

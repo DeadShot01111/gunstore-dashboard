@@ -71,6 +71,8 @@ const tabs: { key: ManagerTab; label: string }[] = [
   { key: "business_performance", label: "Business Performance" },
 ];
 
+const SALES_LOGS_PAGE_SIZE = 25;
+
 function formatMoney(value: number) {
   return `$${Number(value ?? 0).toLocaleString()}`;
 }
@@ -140,6 +142,7 @@ export default function ManagementPage() {
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
   const [commissionRates, setCommissionRates] = useState<CommissionRateRecord[]>([]);
   const [weekAnchor, setWeekAnchor] = useState(new Date());
+  const [salesLogsPage, setSalesLogsPage] = useState(1);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [draftOrder, setDraftOrder] = useState<SavedOrder | null>(null);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
@@ -212,6 +215,22 @@ export default function ManagementPage() {
   }, [orders, weekAnchor]);
 
   const weekRange = useMemo(() => getWeekRange(weekAnchor), [weekAnchor]);
+  const salesLogsPageCount = Math.max(
+    1,
+    Math.ceil(weekOrders.length / SALES_LOGS_PAGE_SIZE)
+  );
+  const paginatedWeekOrders = useMemo(() => {
+    const startIndex = (salesLogsPage - 1) * SALES_LOGS_PAGE_SIZE;
+    return weekOrders.slice(startIndex, startIndex + SALES_LOGS_PAGE_SIZE);
+  }, [salesLogsPage, weekOrders]);
+
+  useEffect(() => {
+    setSalesLogsPage(1);
+  }, [weekAnchor]);
+
+  useEffect(() => {
+    setSalesLogsPage((prev) => Math.min(prev, salesLogsPageCount));
+  }, [salesLogsPageCount]);
 
   function shiftWeek(direction: "prev" | "next") {
     setWeekAnchor((prev) => {
@@ -533,7 +552,7 @@ export default function ManagementPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {weekOrders.map((row) => (
+                  {paginatedWeekOrders.map((row) => (
                     <tr
                       key={row.id}
                       onClick={() => setSelectedOrderId(row.id)}
@@ -555,6 +574,44 @@ export default function ManagementPage() {
               {weekOrders.length === 0 && (
                 <div className="py-8 text-center text-sm text-zinc-400">
                   No sales found for this week.
+                </div>
+              )}
+
+              {weekOrders.length > SALES_LOGS_PAGE_SIZE && (
+                <div className="mt-4 flex items-center justify-between gap-3 border-t border-white/10 pt-4">
+                  <div className="text-xs text-zinc-400">
+                    Showing {(salesLogsPage - 1) * SALES_LOGS_PAGE_SIZE + 1}-
+                    {Math.min(salesLogsPage * SALES_LOGS_PAGE_SIZE, weekOrders.length)} of{" "}
+                    {weekOrders.length} sales
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() =>
+                        setSalesLogsPage((prev) => Math.max(prev - 1, 1))
+                      }
+                      disabled={salesLogsPage === 1}
+                      className="rounded-lg border border-white/10 bg-black/20 px-3 py-1.5 text-xs text-white hover:bg-white/10 disabled:opacity-50"
+                    >
+                      Previous Page
+                    </button>
+
+                    <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-1.5 text-xs text-zinc-300">
+                      Page {salesLogsPage} of {salesLogsPageCount}
+                    </div>
+
+                    <button
+                      onClick={() =>
+                        setSalesLogsPage((prev) =>
+                          Math.min(prev + 1, salesLogsPageCount)
+                        )
+                      }
+                      disabled={salesLogsPage === salesLogsPageCount}
+                      className="rounded-lg border border-white/10 bg-black/20 px-3 py-1.5 text-xs text-white hover:bg-white/10 disabled:opacity-50"
+                    >
+                      Next Page
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -814,6 +871,9 @@ export default function ManagementPage() {
   }, [
     activeTab,
     weekOrders,
+    paginatedWeekOrders,
+    salesLogsPage,
+    salesLogsPageCount,
     selectedOrderId,
     draftOrder,
     saveMessage,

@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase/client";
 export type CraftRecipeRecord = {
   id?: string;
   itemName: string;
+  yieldPerCraft: number;
   titanium: number;
   scrap: number;
   steel: number;
@@ -11,13 +12,13 @@ export type CraftRecipeRecord = {
   rubber: number;
   electronics: number;
   glass: number;
-  wite: number;
   gunpowder: number;
 };
 
 type DbCraftRecipeRow = {
   id: string;
   item_name: string;
+  yield_per_craft: number | null;
   titanium: number | null;
   scrap: number | null;
   steel: number | null;
@@ -26,7 +27,6 @@ type DbCraftRecipeRow = {
   rubber: number | null;
   electronics: number | null;
   glass: number | null;
-  wite: number | null;
   gunpowder: number | null;
 };
 
@@ -40,6 +40,7 @@ function toCraftRecipeRecord(row: DbCraftRecipeRow): CraftRecipeRecord {
   return {
     id: row.id,
     itemName: row.item_name,
+    yieldPerCraft: Math.max(sanitizeNumber(row.yield_per_craft), 1),
     titanium: sanitizeNumber(row.titanium),
     scrap: sanitizeNumber(row.scrap),
     steel: sanitizeNumber(row.steel),
@@ -48,7 +49,6 @@ function toCraftRecipeRecord(row: DbCraftRecipeRow): CraftRecipeRecord {
     rubber: sanitizeNumber(row.rubber),
     electronics: sanitizeNumber(row.electronics),
     glass: sanitizeNumber(row.glass),
-    wite: sanitizeNumber(row.wite),
     gunpowder: sanitizeNumber(row.gunpowder),
   };
 }
@@ -69,6 +69,7 @@ export async function getCraftRecipesFromSupabase(): Promise<CraftRecipeRecord[]
 export async function upsertCraftRecipeInSupabase(recipe: CraftRecipeRecord) {
   const payload = {
     item_name: recipe.itemName.trim(),
+    yield_per_craft: Math.max(sanitizeNumber(recipe.yieldPerCraft), 1),
     titanium: sanitizeNumber(recipe.titanium),
     scrap: sanitizeNumber(recipe.scrap),
     steel: sanitizeNumber(recipe.steel),
@@ -77,7 +78,6 @@ export async function upsertCraftRecipeInSupabase(recipe: CraftRecipeRecord) {
     rubber: sanitizeNumber(recipe.rubber),
     electronics: sanitizeNumber(recipe.electronics),
     glass: sanitizeNumber(recipe.glass),
-    wite: sanitizeNumber(recipe.wite),
     gunpowder: sanitizeNumber(recipe.gunpowder),
   };
 

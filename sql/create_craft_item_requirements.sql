@@ -3,6 +3,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.craft_item_requirements (
   id uuid primary key default gen_random_uuid(),
   item_name text not null unique,
+  yield_per_craft numeric not null default 1,
   titanium numeric not null default 0,
   scrap numeric not null default 0,
   steel numeric not null default 0,
@@ -11,7 +12,6 @@ create table if not exists public.craft_item_requirements (
   rubber numeric not null default 0,
   electronics numeric not null default 0,
   glass numeric not null default 0,
-  wite numeric not null default 0,
   gunpowder numeric not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

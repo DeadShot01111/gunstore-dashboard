@@ -192,6 +192,7 @@ export default function ProductManagementTab({
 
     await upsertCraftRecipeInSupabase({
       itemName: trimmedName,
+      yieldPerCraft: form.category === "Ammo" ? 5 : 1,
       titanium: 0,
       scrap: 0,
       steel: 0,
@@ -200,7 +201,6 @@ export default function ProductManagementTab({
       rubber: 0,
       electronics: 0,
       glass: 0,
-      wite: 0,
       gunpowder: 0,
     });
 

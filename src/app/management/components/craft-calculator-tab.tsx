@@ -18,13 +18,12 @@ type CraftMaterialKey =
   | "rubber"
   | "electronics"
   | "glass"
-  | "wite"
   | "gunpowder";
 
 type CraftPlanRow = {
   id: string;
   itemName: string;
-  craftCount: number;
+  quantityWanted: number;
 };
 
 type CraftRecipe = CraftRecipeRecord;
@@ -40,7 +39,6 @@ const materialColumns: { key: CraftMaterialKey; label: string }[] = [
   { key: "rubber", label: "Rubber" },
   { key: "electronics", label: "Electronics" },
   { key: "glass", label: "Glass" },
-  { key: "wite", label: "Wite" },
   { key: "gunpowder", label: "Gunpowder" },
 ];
 
@@ -54,13 +52,14 @@ function createEmptyRow(): CraftPlanRow {
   return {
     id: createId(),
     itemName: "",
-    craftCount: 1,
+    quantityWanted: 1,
   };
 }
 
 function createEmptyRecipe(itemName = ""): CraftRecipe {
   return {
     itemName,
+    yieldPerCraft: 1,
     titanium: 0,
     scrap: 0,
     steel: 0,
@@ -69,7 +68,6 @@ function createEmptyRecipe(itemName = ""): CraftRecipe {
     rubber: 0,
     electronics: 0,
     glass: 0,
-    wite: 0,
     gunpowder: 0,
   };
 }
@@ -84,7 +82,7 @@ function normalizeRow(row: Partial<CraftPlanRow>): CraftPlanRow {
   return {
     id: typeof row.id === "string" && row.id.trim() ? row.id : createId(),
     itemName: typeof row.itemName === "string" ? row.itemName : "",
-    craftCount: sanitizeNumber(row.craftCount, 1) || 1,
+    quantityWanted: sanitizeNumber(row.quantityWanted, 1) || 1,
   };
 }
 
@@ -174,9 +172,13 @@ export default function CraftCalculatorTab({
   const rowSummaries = useMemo(() => {
     return rows.map((row) => {
       const recipe = recipes[row.itemName] ?? createEmptyRecipe(row.itemName);
+      const craftsNeeded = Math.max(
+        1,
+        Math.ceil(row.quantityWanted / Math.max(Number(recipe.yieldPerCraft ?? 1), 1))
+      );
       const totals = materialColumns.reduce(
         (acc, column) => {
-          acc[column.key] = recipe[column.key] * row.craftCount;
+          acc[column.key] = recipe[column.key] * craftsNeeded;
           return acc;
         },
         {} as Record<CraftMaterialKey, number>
@@ -185,6 +187,7 @@ export default function CraftCalculatorTab({
       return {
         ...row,
         recipe,
+        craftsNeeded,
         totals,
         totalUnits: Object.values(totals).reduce((sum, value) => sum + value, 0),
         hasRecipe: Object.values(recipe)
@@ -233,7 +236,7 @@ export default function CraftCalculatorTab({
               [key]:
                 key === "itemName"
                   ? String(value)
-                  : sanitizeNumber(value, key === "craftCount" ? 1 : 0),
+                  : sanitizeNumber(value, key === "quantityWanted" ? 1 : 0),
             }
           : row
       )
@@ -401,7 +404,8 @@ export default function CraftCalculatorTab({
               <thead className="text-zinc-400">
                 <tr className="border-b border-white/10">
                   <th className="pb-2 font-medium">Item</th>
-                  <th className="pb-2 font-medium">Crafts Wanted</th>
+                  <th className="pb-2 font-medium">Quantity Wanted</th>
+                  <th className="pb-2 font-medium">Crafts Needed</th>
                   {materialColumns.map((column) => (
                     <th key={column.key} className="pb-2 font-medium">
                       {column.label}
@@ -455,10 +459,18 @@ export default function CraftCalculatorTab({
                       <input
                         type="number"
                         min="1"
-                        value={row.craftCount}
-                        onChange={(e) => updateRow(row.id, "craftCount", e.target.value)}
+                        value={row.quantityWanted}
+                        onChange={(e) =>
+                          updateRow(row.id, "quantityWanted", e.target.value)
+                        }
                         className="w-28 rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none"
                       />
+                    </td>
+
+                    <td className="py-3 pr-3 text-white">
+                      <div className="w-24 rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white">
+                        {row.craftsNeeded.toLocaleString()}
+                      </div>
                     </td>
 
                     {materialColumns.map((column) => (
@@ -540,8 +552,8 @@ export default function CraftCalculatorTab({
             Craft Item Requirments
           </div>
           <div className="text-xs text-zinc-400">
-            Save the material requirement in Supabase once per item, then the
-            planner will use it for everyone.
+            Save the material requirement and output quantity in Supabase once per
+            item, then the planner will use it for everyone.
           </div>
         </div>
 
@@ -561,6 +573,21 @@ export default function CraftCalculatorTab({
                 <option key={name} value={name} />
               ))}
             </datalist>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-zinc-400">
+              Yield Per Craft
+            </label>
+            <input
+              type="number"
+              min="1"
+              value={recipeDraft.yieldPerCraft}
+              onChange={(e) =>
+                updateRecipeDraft("yieldPerCraft", e.target.value)
+              }
+              className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-sm text-white outline-none md:max-w-[220px]"
+            />
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -589,6 +616,12 @@ export default function CraftCalculatorTab({
                 {materialColumns
                   .reduce((sum, column) => sum + recipeDraft[column.key], 0)
                   .toLocaleString()}
+              </span>
+            </div>
+            <div className="mt-1">
+              Output per craft:{" "}
+              <span className="font-semibold text-white">
+                {Math.max(Number(recipeDraft.yieldPerCraft ?? 1), 1).toLocaleString()}
               </span>
             </div>
           </div>

@@ -26,6 +26,7 @@ import { supabase } from "@/lib/supabase/client";
 type ManagerTab =
   | "overview"
   | "sales_logs"
+  | "craft_calculator"
   | "material_purchase"
   | "product_management"
   | "commissions"

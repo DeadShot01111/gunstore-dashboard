@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  deleteCraftRecipeInSupabase,
+  upsertCraftRecipeInSupabase,
+} from "@/lib/gunstore/craft-recipes";
 import { categories } from "@/lib/gunstore/catalog";
 import { CatalogProduct, VipMode } from "@/lib/gunstore/types";
 import { supabase } from "@/lib/supabase/client";
@@ -77,7 +81,13 @@ function getVipUnitProfit(product: CatalogProduct) {
   return Math.max(getVipUnitPrice(product) - Number(product.cost ?? 0), 0);
 }
 
-export default function ProductManagementTab() {
+type ProductManagementTabProps = {
+  onCatalogChanged?: () => Promise<void> | void;
+};
+
+export default function ProductManagementTab({
+  onCatalogChanged,
+}: ProductManagementTabProps) {
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -180,7 +190,22 @@ export default function ProductManagementTab() {
       return;
     }
 
+    await upsertCraftRecipeInSupabase({
+      itemName: trimmedName,
+      titanium: 0,
+      scrap: 0,
+      steel: 0,
+      plastic: 0,
+      aluminum: 0,
+      rubber: 0,
+      electronics: 0,
+      glass: 0,
+      wite: 0,
+      gunpowder: 0,
+    });
+
     await loadProducts();
+    await onCatalogChanged?.();
     resetForm();
     showMessage("New product added.");
   }
@@ -241,7 +266,9 @@ export default function ProductManagementTab() {
       return;
     }
 
+    await deleteCraftRecipeInSupabase(productName);
     await loadProducts();
+    await onCatalogChanged?.();
     showMessage("Product deleted.");
   }
 

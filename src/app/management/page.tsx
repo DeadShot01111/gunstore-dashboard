@@ -5,6 +5,7 @@ import { signOut, useSession } from "next-auth/react";
 
 import BusinessPerformanceTab from "@/app/management/components/business-performance-tab";
 import CommissionsTab from "@/app/management/components/commissions-tab";
+import CraftCalculatorTab from "@/app/management/components/craft-calculator-tab";
 import MaterialPurchaseTab from "@/app/management/components/material-purchase-tab";
 import OverviewTab from "@/app/management/components/overview-tab";
 import ProductManagementTab from "@/app/management/components/product-management-tab";
@@ -39,6 +40,7 @@ import {
 type ManagerTab =
   | "overview"
   | "sales_logs"
+  | "craft_calculator"
   | "material_purchase"
   | "product_management"
   | "commissions"
@@ -69,6 +71,7 @@ const tabs: { key: ManagerTab; label: string }[] = [
   { key: "product_management", label: "Product Management" },
   { key: "commissions", label: "Commissions" },
   { key: "business_performance", label: "Business Performance" },
+  { key: "craft_calculator", label: "Craft Calculator" },
 ];
 
 const SALES_LOGS_PAGE_SIZE = 25;
@@ -154,34 +157,36 @@ export default function ManagementPage() {
     void loadPageData();
   }, []);
 
+  async function loadCatalogProducts() {
+    const productsResult = await supabase
+      .from("products")
+      .select("*")
+      .eq("active", true)
+      .order("category", { ascending: true })
+      .order("name", { ascending: true });
+
+    if (!productsResult.error && Array.isArray(productsResult.data)) {
+      setCatalogProducts((productsResult.data as ProductRow[]).map(toCatalogProduct));
+      return;
+    }
+
+    throw new Error(
+      productsResult.error?.message ?? "Failed to load products."
+    );
+  }
+
   async function loadPageData() {
     setLoadingOrders(true);
 
     try {
-      const [loadedOrders, productsResult, loadedRates] = await Promise.all([
+      const [loadedOrders, loadedRates] = await Promise.all([
         getOrdersFromSupabase(),
-        supabase
-          .from("products")
-          .select("*")
-          .eq("active", true)
-          .order("category", { ascending: true })
-          .order("name", { ascending: true }),
         getCommissionRatesFromSupabase(),
+        loadCatalogProducts(),
       ]);
 
       setOrders(loadedOrders);
       setCommissionRates(loadedRates);
-
-      if (!productsResult.error && Array.isArray(productsResult.data)) {
-        setCatalogProducts(
-          (productsResult.data as ProductRow[]).map(toCatalogProduct)
-        );
-      } else {
-        setSaveMessage(
-          `Failed to load products: ${productsResult.error?.message ?? "Unknown error"}`
-        );
-        setTimeout(() => setSaveMessage(""), 2500);
-      }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Failed to load sales logs.";
@@ -855,10 +860,12 @@ export default function ManagementPage() {
     switch (activeTab) {
       case "sales_logs":
         return renderSalesLogs();
+      case "craft_calculator":
+        return <CraftCalculatorTab catalogProducts={catalogProducts} />;
       case "material_purchase":
         return <MaterialPurchaseTab />;
       case "product_management":
-        return <ProductManagementTab />;
+        return <ProductManagementTab onCatalogChanged={loadCatalogProducts} />;
       case "commissions":
         return <CommissionsTab />;
       case "business_performance":

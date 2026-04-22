@@ -10,7 +10,11 @@ import {
   getCommissionRatesFromSupabase,
 } from "@/lib/gunstore/commissions";
 import { createOrderInSupabase } from "@/lib/gunstore/orders";
-import { getCatalogPrice } from "@/lib/gunstore/pricing";
+import {
+  getBulkDiscountLabel,
+  getCatalogPrice,
+  hasAmmoBulkDiscount,
+} from "@/lib/gunstore/pricing";
 import { supabase } from "@/lib/supabase/client";
 import { CartItem, CatalogProduct } from "@/lib/gunstore/types";
 
@@ -54,16 +58,6 @@ function toCatalogProduct(row: ProductRow): CatalogProduct {
 
 function getProductCost(product: CatalogProduct) {
   return Number(product.cost ?? 0);
-}
-
-function isBulkDiscountAmmo(product: Pick<CatalogProduct, "category">) {
-  return product.category === "Ammo";
-}
-
-function getBulkDiscountLabel(product: CatalogProduct) {
-  if (!isBulkDiscountAmmo(product)) return null;
-  if (product.name === "Hunting Ammo") return null;
-  return "20+ units: $50 off each";
 }
 
 function clampQty(value: number) {
@@ -528,10 +522,11 @@ export default function EmployeeClient({
                   )}
 
                   {pricedCart.map((item) => {
-                    const showBulkApplied =
-                      !vipEnabled &&
-                      isBulkDiscountAmmo(item) &&
-                      item.qty >= 20;
+                    const showBulkApplied = hasAmmoBulkDiscount(
+                      item,
+                      item.qty,
+                      vipEnabled
+                    );
 
                     return (
                       <div

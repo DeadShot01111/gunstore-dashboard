@@ -1,6 +1,8 @@
 import { CatalogProduct, SavedOrder, SavedOrderItem } from "./types";
 
 type DiscountMode = "informational" | "applied";
+export const AMMO_BULK_DISCOUNT_MIN_QTY = 20;
+export const AMMO_BULK_DISCOUNT_PER_UNIT = 50;
 
 function getNumber(value: unknown, fallback = 0) {
   const num = Number(value);
@@ -15,6 +17,30 @@ function getProductMap(products: CatalogProduct[]) {
   return map;
 }
 
+export function isBulkDiscountAmmo(
+  product: Pick<CatalogProduct, "category" | "name">
+) {
+  return (
+    product.category === "Ammo" &&
+    product.name.trim().toLowerCase() !== "hunting ammo"
+  );
+}
+
+export function hasAmmoBulkDiscount(
+  product: Pick<CatalogProduct, "category" | "name">,
+  qty: number,
+  vipEnabled = false
+) {
+  return !vipEnabled && isBulkDiscountAmmo(product) && qty >= AMMO_BULK_DISCOUNT_MIN_QTY;
+}
+
+export function getBulkDiscountLabel(
+  product: Pick<CatalogProduct, "category" | "name">
+) {
+  if (!isBulkDiscountAmmo(product)) return null;
+  return `${AMMO_BULK_DISCOUNT_MIN_QTY}+ units: $${AMMO_BULK_DISCOUNT_PER_UNIT} off each`;
+}
+
 export function getCatalogPrice(
   product: CatalogProduct,
   qty = 1,
@@ -22,11 +48,11 @@ export function getCatalogPrice(
 ) {
   const normalPrice = getNumber(product.price);
 
+  if (hasAmmoBulkDiscount(product, qty, vipEnabled)) {
+    return Math.max(normalPrice - AMMO_BULK_DISCOUNT_PER_UNIT, 0);
+  }
+
   if (!vipEnabled) {
-    const ammoBulkItems = ["Pistol Ammo", "SMG Ammo", "Shotgun Ammo"];
-    if (product.category === "Ammo" && ammoBulkItems.includes(product.name) && qty >= 20) {
-      return Math.max(normalPrice - 50, 0);
-    }
     return normalPrice;
   }
 

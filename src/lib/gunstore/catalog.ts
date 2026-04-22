@@ -125,8 +125,6 @@ export const defaultCatalogProducts: CatalogProduct[] = [
   },
 ];
 
-export const ammoBulkItems = ["Pistol Ammo", "SMG Ammo", "Shotgun Ammo"];
-
 const STORAGE_KEY = "gunstore_catalog";
 
 function normalizeProduct(product: Partial<CatalogProduct>): CatalogProduct {

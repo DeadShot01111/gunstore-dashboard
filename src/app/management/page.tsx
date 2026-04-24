@@ -23,6 +23,10 @@ import {
   getCommissionRatesFromSupabase,
 } from "@/lib/gunstore/commissions";
 import {
+  AmmoPromotion,
+  getAmmoPromotionsFromSupabase,
+} from "@/lib/gunstore/promotions";
+import {
   businessLocalDateTimeToIso,
   formatBusinessDate,
   formatBusinessDateTime,
@@ -78,6 +82,30 @@ const SALES_LOGS_PAGE_SIZE = 25;
 
 function formatMoney(value: number) {
   return `$${Number(value ?? 0).toLocaleString()}`;
+}
+
+function getPricingRuleLabel(item: SavedOrderItem) {
+  if (item.pricingRule === "ammo_promotion") {
+    if (item.promotionName?.trim()) {
+      return item.promotionName;
+    }
+
+    if (item.promotionDiscountPercent != null) {
+      return `Ammo promo ${Number(item.promotionDiscountPercent)}% off`;
+    }
+
+    return "Ammo promo";
+  }
+
+  if (item.pricingRule === "bulk_ammo") {
+    return "Bulk ammo discount";
+  }
+
+  if (item.pricingRule === "vip") {
+    return "VIP pricing";
+  }
+
+  return null;
 }
 
 function formatDisplayDate(value: string | Date) {
@@ -144,6 +172,7 @@ export default function ManagementPage() {
   const [orders, setOrders] = useState<SavedOrder[]>([]);
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
   const [commissionRates, setCommissionRates] = useState<CommissionRateRecord[]>([]);
+  const [ammoPromotions, setAmmoPromotions] = useState<AmmoPromotion[]>([]);
   const [weekAnchor, setWeekAnchor] = useState(new Date());
   const [salesLogsPage, setSalesLogsPage] = useState(1);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -175,6 +204,28 @@ export default function ManagementPage() {
     );
   }
 
+  async function loadAmmoPromotions(showError = false) {
+    try {
+      const loadedPromotions = await getAmmoPromotionsFromSupabase();
+      setAmmoPromotions(loadedPromotions);
+      return loadedPromotions;
+    } catch (error) {
+      console.error("Failed to load ammo promotions:", error);
+      setAmmoPromotions([]);
+
+      if (showError) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Failed to load ammo promotions.";
+        setSaveMessage(message);
+        setTimeout(() => setSaveMessage(""), 2500);
+      }
+
+      return [];
+    }
+  }
+
   async function loadPageData() {
     setLoadingOrders(true);
 
@@ -183,6 +234,7 @@ export default function ManagementPage() {
         getOrdersFromSupabase(),
         getCommissionRatesFromSupabase(),
         loadCatalogProducts(),
+        loadAmmoPromotions(),
       ]);
 
       setOrders(loadedOrders);
@@ -259,6 +311,7 @@ export default function ManagementPage() {
     setDraftOrder(
       recalcOrder(updated, catalogProducts, {
         discountMode: key === "discount" ? "applied" : getDiscountMode(draftOrder),
+        ammoPromotions,
       })
     );
   }
@@ -300,6 +353,7 @@ export default function ManagementPage() {
         catalogProducts,
         {
           discountMode: getDiscountMode(draftOrder),
+          ammoPromotions,
         }
       )
     );
@@ -340,6 +394,7 @@ export default function ManagementPage() {
         catalogProducts,
         {
           discountMode: getDiscountMode(draftOrder),
+          ammoPromotions,
         }
       )
     );
@@ -359,6 +414,7 @@ export default function ManagementPage() {
         catalogProducts,
         {
           discountMode: getDiscountMode(draftOrder),
+          ammoPromotions,
         }
       )
     );
@@ -397,6 +453,7 @@ export default function ManagementPage() {
         catalogProducts,
         {
           discountMode: getDiscountMode(draftOrder),
+          ammoPromotions,
         }
       );
 
@@ -765,8 +822,15 @@ export default function ManagementPage() {
                       </div>
 
                       <div className="mt-2 flex items-center justify-between">
-                        <div className="text-xs text-zinc-400">
-                          Line Total: {formatMoney(item.qty * item.unitPrice)}
+                        <div>
+                          <div className="text-xs text-zinc-400">
+                            Line Total: {formatMoney(item.qty * item.unitPrice)}
+                          </div>
+                          {getPricingRuleLabel(item) && (
+                            <div className="mt-1 text-[10px] text-amber-200">
+                              {getPricingRuleLabel(item)}
+                            </div>
+                          )}
                         </div>
 
                         <button
@@ -865,7 +929,12 @@ export default function ManagementPage() {
       case "material_purchase":
         return <MaterialPurchaseTab />;
       case "product_management":
-        return <ProductManagementTab onCatalogChanged={loadCatalogProducts} />;
+        return (
+          <ProductManagementTab
+            onCatalogChanged={loadCatalogProducts}
+            onPromotionsChanged={() => loadAmmoPromotions(true)}
+          />
+        );
       case "commissions":
         return <CommissionsTab />;
       case "business_performance":

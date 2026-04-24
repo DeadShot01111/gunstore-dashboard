@@ -12,11 +12,16 @@ import {
 import { createOrderInSupabase } from "@/lib/gunstore/orders";
 import {
   getBulkDiscountLabel,
-  getCatalogPrice,
-  hasAmmoBulkDiscount,
+  getCatalogPricingDetails,
 } from "@/lib/gunstore/pricing";
+import {
+  AmmoPromotion,
+  getAmmoPromotionsFromSupabase,
+  getApplicableAmmoPromotion,
+} from "@/lib/gunstore/promotions";
 import { supabase } from "@/lib/supabase/client";
 import { CartItem, CatalogProduct } from "@/lib/gunstore/types";
+import { formatBusinessDateTime } from "@/lib/gunstore/week";
 
 type EmployeeClientProps = {
   user: {
@@ -65,12 +70,17 @@ function clampQty(value: number) {
   return Math.max(1, Math.floor(value));
 }
 
+function formatMoney(value: number) {
+  return `$${Number(value ?? 0).toLocaleString()}`;
+}
+
 export default function EmployeeClient({
   user,
   role = "employee",
 }: EmployeeClientProps) {
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
   const [commissionRates, setCommissionRates] = useState<CommissionRateRecord[]>([]);
+  const [ammoPromotions, setAmmoPromotions] = useState<AmmoPromotion[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [vipEnabled, setVipEnabled] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -83,11 +93,26 @@ export default function EmployeeClient({
     void loadEmployeeData();
   }, []);
 
+  useEffect(() => {
+    const channel = supabase
+      .channel("employee-ammo-promotion-updates")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ammo_promotions" },
+        () => void loadEmployeeData()
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, []);
+
   async function loadEmployeeData() {
     setLoadingProducts(true);
 
     try {
-      const [productsResult, loadedRates] = await Promise.all([
+      const [productsResult, loadedRates, loadedPromotions] = await Promise.all([
         supabase
           .from("products")
           .select("*")
@@ -95,6 +120,10 @@ export default function EmployeeClient({
           .order("category", { ascending: true })
           .order("name", { ascending: true }),
         getCommissionRatesFromSupabase(),
+        getAmmoPromotionsFromSupabase().catch((error) => {
+          console.error("Failed to load ammo promotions:", error);
+          return [];
+        }),
       ]);
 
       if (!productsResult.error && Array.isArray(productsResult.data)) {
@@ -105,6 +134,7 @@ export default function EmployeeClient({
       }
 
       setCommissionRates(loadedRates);
+      setAmmoPromotions(loadedPromotions);
     } catch (error) {
       console.error(error);
       setSuccessMessage("Failed to load employee data.");
@@ -121,6 +151,19 @@ export default function EmployeeClient({
     email: user.email ?? "",
     discordId: user.discordId ?? null,
   };
+
+  const activeAmmoPromotion = useMemo(
+    () =>
+      getApplicableAmmoPromotion(
+        { category: "Ammo", name: "Ammo" } as Pick<
+          CatalogProduct,
+          "category" | "name"
+        >,
+        ammoPromotions,
+        new Date()
+      ),
+    [ammoPromotions]
+  );
 
   function addToCart(product: CatalogProduct) {
     setCart((prev) => {
@@ -185,7 +228,11 @@ export default function EmployeeClient({
       );
 
       const orderItems = cart.map((item) => {
-        const unitPrice = getCatalogPrice(item, item.qty, vipEnabled);
+        const pricing = getCatalogPricingDetails(item, item.qty, {
+          vipEnabled,
+          ammoPromotions,
+        });
+        const unitPrice = pricing.unitPrice;
         const unitCost = getProductCost(item);
         const commissionPercent = getCommissionPercentForProduct(
           item.name,
@@ -203,6 +250,10 @@ export default function EmployeeClient({
           qty: item.qty,
           unitPrice,
           lineTotal: unitPrice * item.qty,
+          pricingRule: pricing.pricingRule,
+          promotionId: pricing.promotionId ?? null,
+          promotionName: pricing.promotionName,
+          promotionDiscountPercent: pricing.promotionDiscountPercent,
           unitCost,
           unitProfit,
           totalProfit,
@@ -269,15 +320,20 @@ export default function EmployeeClient({
 
   const pricedCart = useMemo(() => {
     return cart.map((item) => {
-      const unitPrice = getCatalogPrice(item, item.qty, vipEnabled);
+      const pricing = getCatalogPricingDetails(item, item.qty, {
+        vipEnabled,
+        ammoPromotions,
+      });
+      const unitPrice = pricing.unitPrice;
 
       return {
         ...item,
+        pricing,
         effectivePrice: unitPrice,
         lineTotal: unitPrice * item.qty,
       };
     });
-  }, [cart, vipEnabled]);
+  }, [ammoPromotions, cart, vipEnabled]);
 
   const subtotal = useMemo(
     () => pricedCart.reduce((sum, item) => sum + item.lineTotal, 0),
@@ -330,6 +386,19 @@ export default function EmployeeClient({
           {successMessage && (
             <div className="rounded-[20px] border border-green-400/20 bg-green-500/10 px-4 py-2.5 text-xs text-green-300 backdrop-blur-xl">
               {successMessage}
+            </div>
+          )}
+
+          {activeAmmoPromotion && (
+            <div className="rounded-[20px] border border-amber-300/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-100 backdrop-blur-xl">
+              <div className="font-semibold text-amber-50">
+                {activeAmmoPromotion.name}: {activeAmmoPromotion.discountPercent}% off all
+                ammo
+              </div>
+              <div className="mt-1 text-amber-100/80">
+                Live until {formatBusinessDateTime(activeAmmoPromotion.endsAt)}.
+                Bulk ammo discounts and VIP pricing do not stack with this promo.
+              </div>
             </div>
           )}
 
@@ -389,7 +458,9 @@ export default function EmployeeClient({
                     </div>
                     <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs">
                       <span className="text-zinc-300">Total:</span>{" "}
-                      <span className="font-semibold text-white">${total}</span>
+                      <span className="font-semibold text-white">
+                        {formatMoney(total)}
+                      </span>
                     </div>
                   </div>
 
@@ -412,8 +483,17 @@ export default function EmployeeClient({
                 ) : filtered.length > 0 ? (
                   <div className="grid grid-cols-1 gap-2.5 2xl:grid-cols-2">
                     {filtered.map((p) => {
-                      const price = getCatalogPrice(p, 1, vipEnabled);
-                      const bulkLabel = !vipEnabled ? getBulkDiscountLabel(p) : null;
+                      const pricing = getCatalogPricingDetails(p, 1, {
+                        vipEnabled,
+                        ammoPromotions,
+                      });
+                      const price = pricing.unitPrice;
+                      const bulkLabel =
+                        pricing.pricingRule === "ammo_promotion"
+                          ? null
+                          : !vipEnabled
+                            ? getBulkDiscountLabel(p)
+                            : null;
 
                       return (
                         <button
@@ -440,15 +520,22 @@ export default function EmployeeClient({
                                   Price
                                 </div>
                                 <div className="mt-1 text-xl font-semibold leading-none text-red-300">
-                                  ${price}
+                                  {formatMoney(price)}
                                 </div>
                               </div>
                             </div>
 
                             <div className="mt-5 space-y-2">
-                              {vipEnabled && price !== p.price && (
+                              {pricing.pricingRule === "ammo_promotion" && (
+                                <div className="text-[11px] font-medium text-amber-200">
+                                  {pricing.promotionName ?? "Ammo promo"} active:{" "}
+                                  {pricing.promotionDiscountPercent ?? 0}% off
+                                </div>
+                              )}
+
+                              {pricing.pricingRule === "vip" && price !== p.price && (
                                 <div className="text-[11px] font-medium text-green-300">
-                                  VIP pricing active: ${price}
+                                  VIP pricing active: {formatMoney(price)}
                                 </div>
                               )}
 
@@ -522,11 +609,10 @@ export default function EmployeeClient({
                   )}
 
                   {pricedCart.map((item) => {
-                    const showBulkApplied = hasAmmoBulkDiscount(
-                      item,
-                      item.qty,
-                      vipEnabled
-                    );
+                    const showBulkApplied = item.pricing.pricingRule === "bulk_ammo";
+                    const showVipApplied = item.pricing.pricingRule === "vip";
+                    const showPromoApplied =
+                      item.pricing.pricingRule === "ammo_promotion";
 
                     return (
                       <div
@@ -539,11 +625,21 @@ export default function EmployeeClient({
                               {item.name}
                             </div>
                             <div className="mt-0.5 text-[11px] text-zinc-400">
-                              ${item.effectivePrice} each
+                              {formatMoney(item.effectivePrice)} each
                             </div>
+                            {showPromoApplied && (
+                              <div className="mt-1 text-[10px] font-medium text-amber-200">
+                                {item.pricing.promotionName ?? "Ammo promo"} applied
+                              </div>
+                            )}
                             {showBulkApplied && (
                               <div className="mt-1 text-[10px] font-medium text-green-300">
                                 Bulk pricing applied
+                              </div>
+                            )}
+                            {showVipApplied && (
+                              <div className="mt-1 text-[10px] font-medium text-green-300">
+                                VIP pricing applied
                               </div>
                             )}
                           </div>
@@ -574,7 +670,7 @@ export default function EmployeeClient({
                             </div>
 
                             <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-semibold text-white">
-                              ${item.lineTotal}
+                              {formatMoney(item.lineTotal)}
                             </div>
                           </div>
 
@@ -647,19 +743,29 @@ export default function EmployeeClient({
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-zinc-400">Subtotal</span>
-                    <span className="font-medium text-white">${rawSubtotal}</span>
+                    <span className="font-medium text-white">
+                      {formatMoney(rawSubtotal)}
+                    </span>
                   </div>
 
                   <div className="flex justify-between">
                     <span className="text-green-300">Discount</span>
-                    <span className="font-medium text-green-300">-${discount}</span>
+                    <span className="font-medium text-green-300">
+                      -{formatMoney(discount)}
+                    </span>
                   </div>
 
                   <div className="flex justify-between border-t border-white/10 pt-3 text-sm font-bold">
                     <span>Total</span>
-                    <span>${total}</span>
+                    <span>{formatMoney(total)}</span>
                   </div>
                 </div>
+
+                {activeAmmoPromotion && (
+                  <div className="mt-3 rounded-xl border border-amber-300/15 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
+                    Ammo promo pricing overrides VIP and bulk discounts while active.
+                  </div>
+                )}
 
                 <button
                   onClick={finalizeOrder}

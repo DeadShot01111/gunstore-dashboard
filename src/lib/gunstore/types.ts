@@ -1,5 +1,11 @@
 export type VipMode = "none" | "percent" | "fixed";
 
+export type PricingRule =
+  | "standard"
+  | "vip"
+  | "bulk_ammo"
+  | "ammo_promotion";
+
 export type CatalogCategory =
   | "Ammo"
   | "Weapons"
@@ -33,6 +39,10 @@ export type SavedOrderItem = {
   qty: number;
   unitPrice: number;
   lineTotal: number;
+  pricingRule?: PricingRule;
+  promotionId?: string | null;
+  promotionName?: string;
+  promotionDiscountPercent?: number;
 
   // hidden internal cost/profit data
   unitCost?: number;

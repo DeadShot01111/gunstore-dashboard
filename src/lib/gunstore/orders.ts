@@ -27,6 +27,10 @@ type DbOrderItemRow = {
   qty: number;
   unit_price: number;
   line_total: number;
+  pricing_rule: string | null;
+  promotion_id: string | null;
+  promotion_name: string | null;
+  promotion_discount_percent: number | null;
   unit_cost: number;
   unit_profit: number;
   total_profit: number;
@@ -43,6 +47,13 @@ function toSavedOrderItem(row: DbOrderItemRow): SavedOrderItem {
     qty: Number(row.qty ?? 0),
     unitPrice: Number(row.unit_price ?? 0),
     lineTotal: Number(row.line_total ?? 0),
+    pricingRule: (row.pricing_rule as SavedOrderItem["pricingRule"]) ?? "standard",
+    promotionId: row.promotion_id,
+    promotionName: row.promotion_name ?? undefined,
+    promotionDiscountPercent:
+      row.promotion_discount_percent != null
+        ? Number(row.promotion_discount_percent)
+        : undefined,
     unitCost: Number(row.unit_cost ?? 0),
     unitProfit: Number(row.unit_profit ?? 0),
     totalProfit: Number(row.total_profit ?? 0),
@@ -132,6 +143,10 @@ export async function createOrderInSupabase(params: {
     qty: number;
     unitPrice: number;
     lineTotal: number;
+    pricingRule?: SavedOrderItem["pricingRule"];
+    promotionId?: string | null;
+    promotionName?: string;
+    promotionDiscountPercent?: number;
     unitCost?: number;
     unitProfit?: number;
     totalProfit?: number;
@@ -186,6 +201,13 @@ export async function createOrderInSupabase(params: {
     qty: Number(item.qty ?? 0),
     unit_price: Number(item.unitPrice ?? 0),
     line_total: Number(item.lineTotal ?? 0),
+    pricing_rule: item.pricingRule ?? "standard",
+    promotion_id: item.promotionId ?? null,
+    promotion_name: item.promotionName ?? null,
+    promotion_discount_percent:
+      item.promotionDiscountPercent != null
+        ? Number(item.promotionDiscountPercent)
+        : null,
     unit_cost: Number(item.unitCost ?? 0),
     unit_profit: Number(item.unitProfit ?? 0),
     total_profit: Number(item.totalProfit ?? 0),
@@ -240,6 +262,13 @@ export async function updateOrderInSupabase(order: SavedOrder) {
     qty: Number(item.qty ?? 0),
     unit_price: Number(item.unitPrice ?? 0),
     line_total: Number(item.lineTotal ?? 0),
+    pricing_rule: item.pricingRule ?? "standard",
+    promotion_id: item.promotionId ?? null,
+    promotion_name: item.promotionName ?? null,
+    promotion_discount_percent:
+      item.promotionDiscountPercent != null
+        ? Number(item.promotionDiscountPercent)
+        : null,
     unit_cost: Number(item.unitCost ?? 0),
     unit_profit: Number(item.unitProfit ?? 0),
     total_profit: Number(item.totalProfit ?? 0),

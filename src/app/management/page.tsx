@@ -932,7 +932,9 @@ export default function ManagementPage() {
         return (
           <ProductManagementTab
             onCatalogChanged={loadCatalogProducts}
-            onPromotionsChanged={() => loadAmmoPromotions(true)}
+            onPromotionsChanged={async () => {
+              await loadAmmoPromotions(true);
+            }}
           />
         );
       case "commissions":

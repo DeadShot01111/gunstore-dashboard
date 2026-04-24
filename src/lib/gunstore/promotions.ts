@@ -105,7 +105,9 @@ export async function getAmmoPromotionsFromSupabase(): Promise<AmmoPromotion[]> 
 }
 
 export async function upsertAmmoPromotionInSupabase(
-  promotion: Omit<AmmoPromotion, "createdAt" | "updatedAt"> & { id?: string }
+  promotion: Omit<AmmoPromotion, "id" | "createdAt" | "updatedAt"> & {
+    id?: string;
+  }
 ) {
   const payload = {
     id: promotion.id,

@@ -39,6 +39,8 @@ type DbOrderItemRow = {
   created_at: string;
 };
 
+const ORDER_ITEMS_BATCH_SIZE = 100;
+
 function toSavedOrderItem(row: DbOrderItemRow): SavedOrderItem {
   return {
     productId: row.product_id,
@@ -100,20 +102,27 @@ export async function getOrdersFromSupabase(): Promise<SavedOrder[]> {
   if (orders.length === 0) return [];
 
   const orderIds = orders.map((order) => order.id);
+  const itemRows: DbOrderItemRow[] = [];
 
-  const { data: itemRows, error: itemError } = await supabase
-    .from("order_items")
-    .select("*")
-    .in("order_id", orderIds)
-    .order("created_at", { ascending: true });
+  for (let i = 0; i < orderIds.length; i += ORDER_ITEMS_BATCH_SIZE) {
+    const orderIdBatch = orderIds.slice(i, i + ORDER_ITEMS_BATCH_SIZE);
 
-  if (itemError) {
-    throw new Error(itemError.message);
+    const { data, error } = await supabase
+      .from("order_items")
+      .select("*")
+      .in("order_id", orderIdBatch)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    itemRows.push(...((data ?? []) as DbOrderItemRow[]));
   }
 
   const itemsByOrderId = new Map<string, SavedOrderItem[]>();
 
-  for (const item of ((itemRows ?? []) as DbOrderItemRow[])) {
+  for (const item of itemRows) {
     const existing = itemsByOrderId.get(item.order_id) ?? [];
     existing.push(toSavedOrderItem(item));
     itemsByOrderId.set(item.order_id, existing);

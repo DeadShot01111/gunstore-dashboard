@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   deleteCraftRecipeInSupabase,
+  getCraftRecipesFromSupabase,
   upsertCraftRecipeInSupabase,
 } from "@/lib/gunstore/craft-recipes";
 import { categories } from "@/lib/gunstore/catalog";
@@ -146,6 +147,10 @@ export default function ProductManagementTab({
   onPromotionsChanged,
 }: ProductManagementTabProps) {
   const [products, setProducts] = useState<ProductRow[]>([]);
+  const [originalProductNames, setOriginalProductNames] = useState<Record<string, string>>({});
+  const [editingProductNameIds, setEditingProductNameIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [ammoPromotions, setAmmoPromotions] = useState<AmmoPromotion[]>([]);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -178,7 +183,14 @@ export default function ProductManagementTab({
       return;
     }
 
-    setProducts((data ?? []) as ProductRow[]);
+    const loadedProducts = (data ?? []) as ProductRow[];
+
+    setProducts(loadedProducts);
+    setOriginalProductNames(
+      Object.fromEntries(
+        loadedProducts.map((product) => [product.id, product.name])
+      )
+    );
     setLoading(false);
   }, [showMessage]);
 
@@ -256,6 +268,63 @@ export default function ProductManagementTab({
         product.id === productId ? { ...product, [key]: value } : product
       )
     );
+  }
+
+  function toggleProductNameEdit(productId: string) {
+    setEditingProductNameIds((prev) => {
+      const next = new Set(prev);
+
+      if (next.has(productId)) {
+        next.delete(productId);
+      } else {
+        next.add(productId);
+      }
+
+      return next;
+    });
+  }
+
+  async function syncRenamedProductRecords(
+    oldName: string,
+    newName: string,
+    category: string
+  ) {
+    const recipes = await getCraftRecipesFromSupabase();
+    const oldRecipe = recipes.find((recipe) => recipe.itemName === oldName);
+
+    await upsertCraftRecipeInSupabase(
+      oldRecipe
+        ? {
+            ...oldRecipe,
+            itemName: newName,
+          }
+        : {
+            itemName: newName,
+            yieldPerCraft: category === "Ammo" ? 5 : 1,
+            titanium: 0,
+            scrap: 0,
+            steel: 0,
+            plastic: 0,
+            aluminum: 0,
+            rubber: 0,
+            electronics: 0,
+            glass: 0,
+            gunpowder: 0,
+          }
+    );
+
+    if (oldRecipe) {
+      await deleteCraftRecipeInSupabase(oldName);
+    }
+
+    const { error } = await supabase
+      .from("commission_rates")
+      .update({ product_name: newName })
+      .eq("product_name", oldName);
+
+    if (error) {
+      throw error;
+    }
   }
 
   async function saveAmmoPromotion() {
@@ -430,10 +499,36 @@ export default function ProductManagementTab({
     setSavingAll(true);
 
     try {
+      const trimmedProducts = products.map((product) => ({
+        ...product,
+        name: product.name.trim(),
+      }));
+
+      if (trimmedProducts.some((product) => !product.name)) {
+        showMessage("Product names cannot be blank.");
+        return;
+      }
+
+      const normalizedNames = trimmedProducts.map((product) =>
+        product.name.toLowerCase()
+      );
+      const hasDuplicateName = normalizedNames.some(
+        (name, index) => normalizedNames.indexOf(name) !== index
+      );
+
+      if (hasDuplicateName) {
+        showMessage("Product names must be unique.");
+        return;
+      }
+
       for (const product of products) {
+        const trimmedName = product.name.trim();
+        const originalName = originalProductNames[product.id] ?? product.name;
+
         const { error } = await supabase
           .from("products")
           .update({
+            name: trimmedName,
             category: product.category,
             price: Number(product.price),
             cost: Number(product.cost),
@@ -452,11 +547,20 @@ export default function ProductManagementTab({
         if (error) {
           throw error;
         }
+
+        if (trimmedName !== originalName) {
+          await syncRenamedProductRecords(
+            originalName,
+            trimmedName,
+            product.category
+          );
+        }
       }
 
       showMessage("Product catalog updated.");
       await loadProducts();
       await onCatalogChanged?.();
+      setEditingProductNameIds(new Set());
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unknown save error";
@@ -895,7 +999,7 @@ export default function ProductManagementTab({
               Product Catalog
             </div>
             <div className="text-xs text-zinc-400">
-              Edit sale prices, store costs, and VIP pricing only.
+              Edit names, sale prices, store costs, and VIP pricing.
             </div>
           </div>
 
@@ -952,21 +1056,42 @@ export default function ProductManagementTab({
                 >
                   <div className="mb-3 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
                     <div>
-                      <div className="text-lg font-semibold text-white">
-                        {product.name}
-                      </div>
+                      {editingProductNameIds.has(product.id) ? (
+                        <input
+                          value={product.name}
+                          onChange={(e) =>
+                            updateLocalProduct(product.id, "name", e.target.value)
+                          }
+                          className="w-full rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-lg font-semibold text-white outline-none xl:min-w-[280px]"
+                        />
+                      ) : (
+                        <div className="text-lg font-semibold text-white">
+                          {product.name}
+                        </div>
+                      )}
                       <div className="mt-1 text-xs text-zinc-400">
                         Normal Profit: {formatMoney(getNormalUnitProfit(catalogProduct))} | VIP Profit:{" "}
                         {formatMoney(getVipUnitProfit(catalogProduct))}
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => deleteProduct(product.id, product.name)}
-                      className="rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-300 hover:bg-red-500/20"
-                    >
-                      Delete Product
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => toggleProductNameEdit(product.id)}
+                        className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs font-medium text-white hover:bg-white/10"
+                      >
+                        {editingProductNameIds.has(product.id)
+                          ? "Done Editing"
+                          : "Edit Name"}
+                      </button>
+
+                      <button
+                        onClick={() => deleteProduct(product.id, product.name)}
+                        className="rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-300 hover:bg-red-500/20"
+                      >
+                        Delete Product
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 gap-3 xl:grid-cols-6">
